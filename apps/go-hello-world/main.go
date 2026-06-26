@@ -13,6 +13,7 @@ import (
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/sdk/metric"
@@ -39,17 +40,20 @@ func setupOTel(ctx context.Context, v string) (func(context.Context) error, erro
 		return func(context.Context) error { return nil }, nil
 	}
 
-	host, _ := os.Hostname() // container-ID i swarm
-	node := os.Getenv("NODE_HOSTNAME")
-	if node == "" {
-		node = host // lokal fallback: ingen swarm-node
-	}
-	res, err := resource.New(ctx, resource.WithAttributes(
+	host, _ := os.Hostname() // k8s: pod-hostname = pod-navn (metadata.name) by default
+	attrs := []attribute.KeyValue{
 		semconv.ServiceName("go-hello-world"),
 		semconv.ServiceVersion(v),
-		semconv.HostName(node),    // swarm-node (host-maskin) = OTEL host.name
-		semconv.ContainerID(host), // container/replica
-	))
+		semconv.K8SPodName(host),
+	}
+	// node + namespace via Downward API (spec.nodeName / metadata.namespace), tomme lokalt -> dropp attr
+	if node := os.Getenv("NODE_NAME"); node != "" {
+		attrs = append(attrs, semconv.K8SNodeName(node))
+	}
+	if ns := os.Getenv("POD_NAMESPACE"); ns != "" {
+		attrs = append(attrs, semconv.K8SNamespaceName(ns))
+	}
+	res, err := resource.New(ctx, resource.WithAttributes(attrs...))
 	if err != nil {
 		return nil, err
 	}
@@ -101,10 +105,10 @@ func main() {
 		fmt.Fprintf(w, `{"version":%q}`+"\n", v)
 	})
 	mux.HandleFunc("/whoami", func(w http.ResponseWriter, r *http.Request) {
-		host, _ := os.Hostname()           // container-hostname = replica-identitet
-		node := os.Getenv("NODE_HOSTNAME") // valgfri swarm-template env, ellers tom
+		host, _ := os.Hostname() // k8s: pod-navn (metadata.name)
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"host":%q,"node":%q,"version":%q}`+"\n", host, node, v)
+		fmt.Fprintf(w, `{"pod":%q,"node":%q,"namespace":%q,"version":%q}`+"\n",
+			host, os.Getenv("NODE_NAME"), os.Getenv("POD_NAMESPACE"), v)
 	})
 
 	port := os.Getenv("PORT")

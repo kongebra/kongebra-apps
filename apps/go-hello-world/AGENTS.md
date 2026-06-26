@@ -8,7 +8,7 @@ Stateless, distroless, instrumentert med OpenTelemetry. Se [root AGENTS.md](../.
 - `GET /` -> `Hello World`
 - `GET /health` -> `{"status":"ok"}` (JSON, rask, ingen deps)
 - `GET /version` -> `{"version":"<tag>"}` (innebygd versjon)
-- `GET /whoami` -> `{"host":<container>,"node":<swarm-node>,"version":<tag>}` (for å se LB/plassering)
+- `GET /whoami` -> `{"pod":<pod>,"node":<k8s-node>,"namespace":<ns>,"version":<tag>}` (for å se LB/plassering)
 
 ## Bygg og kjør
 
@@ -27,13 +27,14 @@ go build -ldflags "-X main.version=$(git rev-parse --short HEAD)" -o /tmp/app .
 | `PORT` | lytteport (default 8080) |
 | `VERSION` | overstyrer innebygd versjon |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP-mål; **tom = OTEL av** (no-op, lokal kjøring funker) |
-| `NODE_HOSTNAME` | swarm-node-navn (`{{.Node.Hostname}}`), mappes til `host.name` i traces |
+| `NODE_NAME` | k8s-node (Downward API `spec.nodeName`), mappes til `k8s.node.name` |
+| `POD_NAMESPACE` | k8s-namespace (Downward API `metadata.namespace`), mappes til `k8s.namespace.name` |
 
 ## OTEL
 
 - `otelhttp` gir auto server-spans (navngitt per rute) + `http.server`-metrics.
-- OTLP HTTP til `OTEL_EXPORTER_OTLP_ENDPOINT` (`http://`-scheme = insecure). Resource: `service.name`, `service.version`, `host.name` (node), `container.id` (replica).
-- Graceful shutdown på SIGTERM flusher telemetri (swarm-vennlig).
+- OTLP HTTP til `OTEL_EXPORTER_OTLP_ENDPOINT` (`http://`-scheme = insecure). Resource: `service.name`, `service.version`, `k8s.pod.name` (alltid, fra hostname), `k8s.node.name` + `k8s.namespace.name` (kun når Downward API-env er satt).
+- Graceful shutdown på SIGTERM flusher telemetri (k8s-vennlig: pod får SIGTERM ved rolling update/evict).
 
 ## Deploy
 
