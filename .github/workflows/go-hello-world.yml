@@ -7,13 +7,14 @@ on:
       - "apps/go-hello-world/**"
       - ".github/workflows/go-hello-world.yml"
       - ".github/workflows/_build-deploy.yml"
+      - ".github/actions/gitops-promote/**"
   workflow_dispatch:
     inputs:
       image_tag:
-        description: "Eksisterende tag å deploye, f.eks. 2026-06-25-9571da7 (rollback). Tom = bygg current."
+        description: "Eksisterende tag aa deploye, f.eks. 2026-06-25-9571da7 (rollback/promote). Tom = bygg current."
         required: false
 
-# Caller må grant minst det reusable-workflowen krever (repo-default er read-only).
+# Caller maa grant minst det reusable-workflowen krever (repo-default er read-only).
 permissions:
   contents: read
   packages: write
@@ -22,8 +23,8 @@ jobs:
   deploy:
     uses: ./.github/workflows/_build-deploy.yml
     with:
+      app: go-hello-world
       app_dir: apps/go-hello-world
       image: ghcr.io/kongebra/go-hello-world
-      dokploy_app_id: "86e3IUkJ3jtIro6GoOWdL"
       image_tag: ${{ github.event.inputs.image_tag || '' }}
     secrets: inherit

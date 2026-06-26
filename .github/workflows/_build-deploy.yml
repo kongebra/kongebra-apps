@@ -1,55 +1,63 @@
-# Gjenbrukbar build+deploy mot Dokploy over tailnet. Kalles av per-app workflows.
-# Bygger image (med mindre image_tag er satt = rollback), peker Dokploy på taggen, deployer.
+# Gjenbrukbar build-once-promote mot k3s via GitOps. Kalles av per-app workflows.
+# Bygger ETT immutabelt image per main-commit, deployer auto til dev, promoterer
+# samme tag til prod bak en GitHub Environment-gate. Ingen rebuild for prod.
+# Deploy = skrive taggen inn i kongebra-gitops-overlayet; ArgoCD ruller den ut.
+# Se ADR-0001 (docs/adr/0001-build-once-promote.md).
 name: build-deploy (reusable)
 
 on:
   workflow_call:
     inputs:
+      app:
+        description: "App-navn, f.eks. go-hello-world"
+        required: true
+        type: string
       app_dir:
         description: "Build-context, f.eks. apps/go-hello-world"
         required: true
         type: string
       image:
-        description: "Image-navn uten tag, f.eks. ghcr.io/kongebra/go-hello-world"
-        required: true
-        type: string
-      dokploy_app_id:
-        description: "Dokploy applicationId (ikke hemmelig)"
+        description: "Image uten tag, f.eks. ghcr.io/kongebra/go-hello-world"
         required: true
         type: string
       image_tag:
-        description: "Eksisterende tag å deploye (rollback). Tom = bygg current commit."
+        description: "Eksisterende tag (rollback/promote). Satt = hopp over build, promoter eksisterende."
         required: false
         type: string
         default: ""
 
+# build trenger packages:write for GHCR-push. deploy-jobbene pusher til gitops-repoet
+# via GITOPS_DEPLOY_KEY (ssh), ikke GITHUB_TOKEN, saa de bryr seg ikke om disse.
 permissions:
   contents: read
   packages: write
 
 jobs:
-  build-deploy:
+  build:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
     steps:
       - name: Resolve image tag
-        # rollback (input satt) hopper over build; ellers lesbar dato+short-sha (UTC)
+        id: tag
+        # rollback/promote (input satt) hopper over build; ellers lesbar dato+short-sha (UTC)
         env:
           IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
           if [ -n "$IMAGE_TAG" ]; then
-            echo "TAG=$IMAGE_TAG" >> "$GITHUB_ENV"
-            echo "BUILD=false" >> "$GITHUB_ENV"
+            echo "tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+            echo "build=false" >> "$GITHUB_OUTPUT"
           else
-            echo "TAG=$(date -u +%Y-%m-%d)-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
-            echo "BUILD=true" >> "$GITHUB_ENV"
+            echo "tag=$(date -u +%Y-%m-%d)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+            echo "build=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Checkout
-        if: env.BUILD == 'true'
+        if: steps.tag.outputs.build == 'true'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 
       - name: Log in to GHCR
-        if: env.BUILD == 'true'
+        if: steps.tag.outputs.build == 'true'
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4.2.0
         with:
           registry: ghcr.io
@@ -57,44 +65,57 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push image
-        if: env.BUILD == 'true'
+        if: steps.tag.outputs.build == 'true'
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7.2.0
         with:
           context: ${{ inputs.app_dir }}
           push: true
           build-args: |
-            VERSION=${{ env.TAG }}
+            VERSION=${{ steps.tag.outputs.tag }}
+          # Immutabel dato+sha-tag + full-sha for digest-stabil referanse. Ingen :latest
+          # (overlayet pinner taggen, og :latest ville bryte build-once-promote-sporbarheten).
           tags: |
-            ${{ inputs.image }}:latest
+            ${{ inputs.image }}:${{ steps.tag.outputs.tag }}
             ${{ inputs.image }}:${{ github.sha }}
-            ${{ inputs.image }}:${{ env.TAG }}
 
-      - name: Join tailnet
-        uses: tailscale/github-action@6cae46e2d796f265265cfcf628b72a32b4d7cade  # v3.3.0
+  deploy-dev:
+    needs: build
+    runs-on: ubuntu-latest
+    # Serialiser gitops-skriving per app+env saa samtidige app-pushes ikke klobber hverandre.
+    concurrency:
+      group: gitops-${{ inputs.app }}-dev
+      cancel-in-progress: false
+    steps:
+      - name: Checkout caller repo (for composite action)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - name: Promote to dev
+        uses: ./.github/actions/gitops-promote
         with:
-          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
-          tags: tag:ci
+          app: ${{ inputs.app }}
+          image: ${{ inputs.image }}
+          tag: ${{ needs.build.outputs.tag }}
+          env: dev
+          deploy_key: ${{ secrets.GITOPS_DEPLOY_KEY }}
 
-      - name: Point Dokploy at this image
-        env:
-          DOKPLOY_URL: ${{ secrets.DOKPLOY_URL }}
-          DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
-          APP_ID: ${{ inputs.dokploy_app_id }}
-          IMAGE: ${{ inputs.image }}
-        run: |
-          curl -fsS -X POST "$DOKPLOY_URL/api/application.update" \
-            -H "x-api-key: $DOKPLOY_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d "{\"applicationId\":\"$APP_ID\",\"dockerImage\":\"$IMAGE:$TAG\"}"
+  deploy-prod:
+    # deploy-dev for rekkefoelge (dev foer prod), build for tag-outputen
+    needs: [deploy-dev, build]
+    runs-on: ubuntu-latest
+    # environment: production er selve gaten - required reviewer maa godkjenne foer dette kjoerer.
+    environment: production
+    concurrency:
+      group: gitops-${{ inputs.app }}-prod
+      cancel-in-progress: false
+    steps:
+      - name: Checkout caller repo (for composite action)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 
-      - name: Deploy
-        env:
-          DOKPLOY_URL: ${{ secrets.DOKPLOY_URL }}
-          DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
-          APP_ID: ${{ inputs.dokploy_app_id }}
-        run: |
-          curl -fsS -X POST "$DOKPLOY_URL/api/application.deploy" \
-            -H "x-api-key: $DOKPLOY_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d "{\"applicationId\":\"$APP_ID\"}"
+      - name: Promote to prod
+        uses: ./.github/actions/gitops-promote
+        with:
+          app: ${{ inputs.app }}
+          image: ${{ inputs.image }}
+          tag: ${{ needs.build.outputs.tag }}
+          env: prod
+          deploy_key: ${{ secrets.GITOPS_DEPLOY_KEY }}

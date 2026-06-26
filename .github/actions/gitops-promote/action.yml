@@ -1,0 +1,73 @@
+# Skriver en immutabel image-tag inn i kongebra-gitops sitt overlay for <env> og
+# pusher. ArgoCD ruller endringen ut. Brukt av begge deploy-jobbene i _build-deploy.yml.
+# Build-once-promote: prod faar noeyaktig samme tag som dev (ingen rebuild).
+name: gitops-promote
+description: Promote an image tag into a kongebra-gitops env overlay and push
+
+inputs:
+  app:
+    description: "App-navn (= mappe under apps/ i gitops)"
+    required: true
+  image:
+    description: "Image uten tag, f.eks. ghcr.io/kongebra/go-hello-world"
+    required: true
+  tag:
+    description: "Immutabel tag aa promotere"
+    required: true
+  env:
+    description: "Miljoe: dev eller prod (= overlays/<env>)"
+    required: true
+  deploy_key:
+    description: "SSH write deploy-key til kongebra-gitops"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout gitops repo
+      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      with:
+        repository: kongebra/kongebra-gitops
+        ref: main
+        ssh-key: ${{ inputs.deploy_key }}
+        path: gitops
+
+    - name: Install kustomize
+      shell: bash
+      # ponytail: pinnet v5.4.3; bump naar et overlay trenger nyere kustomize-felter
+      run: |
+        curl -sSL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz" \
+          | sudo tar xz -C /usr/local/bin kustomize
+        kustomize version
+
+    - name: Set tag in overlay and push
+      shell: bash
+      # Inputs via env (ikke direkte ${{ }} i run) for aa unngaa shell-injection.
+      env:
+        APP: ${{ inputs.app }}
+        IMAGE: ${{ inputs.image }}
+        TAG: ${{ inputs.tag }}
+        ENVIRONMENT: ${{ inputs.env }}
+      run: |
+        set -euo pipefail
+        cd "gitops/apps/${APP}/overlays/${ENVIRONMENT}"
+        kustomize edit set image "${IMAGE}=${IMAGE}:${TAG}"
+
+        git config user.name "kongebra-ci[bot]"
+        git config user.email "ci@users.noreply.github.com"
+        git add kustomization.yaml
+
+        if git diff --cached --quiet; then
+          echo "Tag uendret (${TAG}) for ${APP}/${ENVIRONMENT}, ingen commit."
+          exit 0
+        fi
+        git commit -m "promote ${APP} -> ${ENVIRONMENT} (${TAG})"
+
+        # rebase-retry mot samtidige pushes fra andre apper paa delt gitops-main
+        for attempt in 1 2 3; do
+          git pull --rebase origin main && git push origin main && exit 0
+          echo "push-forsoek ${attempt} feilet, prover igjen..."
+          sleep 3
+        done
+        echo "Klarte ikke pushe til gitops etter 3 forsoek." >&2
+        exit 1
