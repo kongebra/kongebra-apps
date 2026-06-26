@@ -1,0 +1,24 @@
+name: go-hello-world
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/go-hello-world/**"
+      - ".github/workflows/go-hello-world.yml"
+      - ".github/workflows/_build-deploy.yml"
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Eksisterende tag å deploye, f.eks. 2026-06-25-9571da7 (rollback). Tom = bygg current."
+        required: false
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/_build-deploy.yml
+    with:
+      app_dir: apps/go-hello-world
+      image: ghcr.io/kongebra/go-hello-world
+      dokploy_app_id: "86e3IUkJ3jtIro6GoOWdL"
+      image_tag: ${{ github.event.inputs.image_tag || '' }}
+    secrets: inherit

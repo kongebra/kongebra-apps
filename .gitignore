@@ -1,0 +1,11 @@
+# build artifacts
+*.exe
+/apps/*/dist/
+/apps/*/bin/
+
+# local env
+.env
+.env.local
+
+# go binaries built in app dirs
+/apps/go-hello-world/go-hello-world

@@ -1,0 +1,100 @@
+# Gjenbrukbar build+deploy mot Dokploy over tailnet. Kalles av per-app workflows.
+# Bygger image (med mindre image_tag er satt = rollback), peker Dokploy på taggen, deployer.
+name: build-deploy (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      app_dir:
+        description: "Build-context, f.eks. apps/go-hello-world"
+        required: true
+        type: string
+      image:
+        description: "Image-navn uten tag, f.eks. ghcr.io/kongebra/go-hello-world"
+        required: true
+        type: string
+      dokploy_app_id:
+        description: "Dokploy applicationId (ikke hemmelig)"
+        required: true
+        type: string
+      image_tag:
+        description: "Eksisterende tag å deploye (rollback). Tom = bygg current commit."
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve image tag
+        # rollback (input satt) hopper over build; ellers lesbar dato+short-sha (UTC)
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          if [ -n "$IMAGE_TAG" ]; then
+            echo "TAG=$IMAGE_TAG" >> "$GITHUB_ENV"
+            echo "BUILD=false" >> "$GITHUB_ENV"
+          else
+            echo "TAG=$(date -u +%Y-%m-%d)-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+            echo "BUILD=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Checkout
+        if: env.BUILD == 'true'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - name: Log in to GHCR
+        if: env.BUILD == 'true'
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        if: env.BUILD == 'true'
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7.2.0
+        with:
+          context: ${{ inputs.app_dir }}
+          push: true
+          build-args: |
+            VERSION=${{ env.TAG }}
+          tags: |
+            ${{ inputs.image }}:latest
+            ${{ inputs.image }}:${{ github.sha }}
+            ${{ inputs.image }}:${{ env.TAG }}
+
+      - name: Join tailnet
+        uses: tailscale/github-action@6cae46e2d796f265265cfcf628b72a32b4d7cade  # v3.3.0
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Point Dokploy at this image
+        env:
+          DOKPLOY_URL: ${{ secrets.DOKPLOY_URL }}
+          DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
+          APP_ID: ${{ inputs.dokploy_app_id }}
+          IMAGE: ${{ inputs.image }}
+        run: |
+          curl -fsS -X POST "$DOKPLOY_URL/api/application.update" \
+            -H "x-api-key: $DOKPLOY_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"applicationId\":\"$APP_ID\",\"dockerImage\":\"$IMAGE:$TAG\"}"
+
+      - name: Deploy
+        env:
+          DOKPLOY_URL: ${{ secrets.DOKPLOY_URL }}
+          DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
+          APP_ID: ${{ inputs.dokploy_app_id }}
+        run: |
+          curl -fsS -X POST "$DOKPLOY_URL/api/application.deploy" \
+            -H "x-api-key: $DOKPLOY_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"applicationId\":\"$APP_ID\"}"
