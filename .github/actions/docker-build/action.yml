@@ -37,6 +37,9 @@ runs:
       with:
         context: ${{ inputs.app_dir }}
         push: ${{ inputs.push }}
+        # SLSA-provenance + SBOM-attestasjon, kun ved push (attestasjon krever registry).
+        provenance: ${{ inputs.push }}
+        sbom: ${{ inputs.push }}
         build-args: |
           VERSION=${{ inputs.tag }}
         # Immutabel dato+sha-tag + full-sha for digest-stabil referanse. Ingen :latest

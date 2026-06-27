@@ -1,0 +1,17 @@
+version: 2
+updates:
+  # Holder SHA-pinnede tredjeparts-actions ferske (workflows + composite actions).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+
+  # Go-deps per app (egen modul). Legg til en blokk per ny app.
+  - package-ecosystem: gomod
+    directory: /apps/go-hello-world
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: deps

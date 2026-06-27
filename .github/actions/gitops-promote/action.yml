@@ -51,10 +51,12 @@ runs:
       run: |
         set -euo pipefail
         cd "gitops/apps/${APP}/overlays/${ENVIRONMENT}"
-        # ponytail: promoterer på TAG (mutbar i GHCR), ikke digest. Build-once-promote er pt.
-        # tag-tillit, ikke kryptografisk. Upgrade: pin image@sha256:<digest> (krever digest-output
-        # fra docker-build threades hit). Se issue om digest-pinning.
-        kustomize edit set image "${IMAGE}=${IMAGE}:${TAG}"
+        # Build-once-promote: pin på DIGEST (immutabel), ikke mutbar tag. Resolver digesten
+        # fra taggen i GHCR (public image, ingen auth) - uniformt for både build og rollback,
+        # og garanterer at prod får nøyaktig samme bytes som dev (kryptografisk, ikke tag-tillit).
+        DIGEST=$(docker buildx imagetools inspect "${IMAGE}:${TAG}" --format '{{.Manifest.Digest}}')
+        echo "Resolved ${IMAGE}:${TAG} -> ${DIGEST}"
+        kustomize edit set image "${IMAGE}=${IMAGE}@${DIGEST}"
 
         git config user.name "kongebra-ci[bot]"
         git config user.email "ci@users.noreply.github.com"
@@ -64,7 +66,7 @@ runs:
           echo "Tag uendret (${TAG}) for ${APP}/${ENVIRONMENT}, ingen commit."
           exit 0
         fi
-        git commit -m "promote ${APP} -> ${ENVIRONMENT} (${TAG})"
+        git commit -m "promote ${APP} -> ${ENVIRONMENT} (${TAG} ${DIGEST})"
 
         # rebase-retry mot samtidige pushes fra andre apper paa delt gitops-main
         for attempt in 1 2 3; do
