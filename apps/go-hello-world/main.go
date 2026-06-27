@@ -33,6 +33,13 @@ func logRequest(next http.Handler) http.Handler {
 	})
 }
 
+// whoamiJSON bygger /whoami-svaret. Egen funksjon for å være enhetstestbar
+// (pod = container-hostname, node + namespace fra Downward API).
+func whoamiJSON(pod, node, namespace, version string) string {
+	return fmt.Sprintf(`{"pod":%q,"node":%q,"namespace":%q,"version":%q}`+"\n",
+		pod, node, namespace, version)
+}
+
 // setupOTel konfigurerer traces + metrics via OTLP HTTP. No-op hvis
 // OTEL_EXPORTER_OTLP_ENDPOINT mangler, så lokal kjøring uten collector funker.
 func setupOTel(ctx context.Context, v string) (func(context.Context) error, error) {
@@ -107,8 +114,7 @@ func main() {
 	mux.HandleFunc("/whoami", func(w http.ResponseWriter, r *http.Request) {
 		host, _ := os.Hostname() // k8s: pod-navn (metadata.name)
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"pod":%q,"node":%q,"namespace":%q,"version":%q}`+"\n",
-			host, os.Getenv("NODE_NAME"), os.Getenv("POD_NAMESPACE"), v)
+		fmt.Fprint(w, whoamiJSON(host, os.Getenv("NODE_NAME"), os.Getenv("POD_NAMESPACE"), v))
 	})
 
 	port := os.Getenv("PORT")
