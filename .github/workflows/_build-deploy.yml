@@ -56,27 +56,14 @@ jobs:
         if: steps.tag.outputs.build == 'true'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 
-      - name: Log in to GHCR
-        if: steps.tag.outputs.build == 'true'
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4.2.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Build and push image
         if: steps.tag.outputs.build == 'true'
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7.2.0
+        uses: ./.github/actions/docker-build
         with:
-          context: ${{ inputs.app_dir }}
+          app_dir: ${{ inputs.app_dir }}
+          image: ${{ inputs.image }}
+          tag: ${{ steps.tag.outputs.tag }}
           push: true
-          build-args: |
-            VERSION=${{ steps.tag.outputs.tag }}
-          # Immutabel dato+sha-tag + full-sha for digest-stabil referanse. Ingen :latest
-          # (overlayet pinner taggen, og :latest ville bryte build-once-promote-sporbarheten).
-          tags: |
-            ${{ inputs.image }}:${{ steps.tag.outputs.tag }}
-            ${{ inputs.image }}:${{ github.sha }}
 
   deploy-dev:
     needs: build

@@ -1,64 +1,90 @@
-# newb.no monorepo
+# kongebra-apps monorepo
 
-Self-hostede apper deployet til en privat Dokploy-instans (`dokploy.newb.no`, bak Tailscale).
-Dette er en lab for å lære HA, multi-node, observability og drift - men koden skal holde produksjonskvalitet.
+Self-hosted apps for the kongebra lab.
+Apps deploy to a private 3-node k3s cluster (Hetzner, behind Tailscale) via GitOps.
+This is a lab for learning HA, multi-node, observability and operations - but the code must hold production quality.
 
-## Struktur
+Deploy manifests live in the **kongebra-gitops** repo (ArgoCD app-of-apps).
+This repo holds app code + CI that builds images to GHCR; ArgoCD pulls and deploys them.
+
+## Structure
 
 ```
-apps/<navn>/            # én app per mappe, eget go.mod (multi-module monorepo)
-.github/workflows/
-  _build-deploy.yml     # gjenbrukbar workflow (workflow_call): build -> GHCR -> Dokploy-deploy
-  <app>.yml             # tynn per-app workflow, path-filtrert, kaller _build-deploy
+apps/<name>/            # one app per folder, own go.mod (multi-module monorepo)
+.github/
+  actions/
+    docker-build/       # composite: build image + optional GHCR push (docker-generic)
+    gitops-promote/     # composite: write image tag into kongebra-gitops overlay
+  workflows/
+    _build-deploy.yml   # reusable: build -> push GHCR -> promote dev -> promote prod (gated)
+    <app>.yml           # per-app caller (push to main), path-filtered, calls _build-deploy
+    <app>-pr.yml        # per-app PR check (pull_request): tests + build-only, no push
 ```
 
-Ny app: lag `apps/<navn>/`, kopier en eksisterende `<app>.yml` og bytt `app_dir`/`image`/`dokploy_app_id`.
+New app: create `apps/<name>/`, copy an existing `<app>.yml` + `<app>-pr.yml` and change `app`/`app_dir`/`image` (+ path filters).
+Then add the deploy manifests in `kongebra-gitops/apps/<name>/` (see that repo's AGENTS.md).
 
-## Teknologivalg
+## Tech choices
 
-- **Backend: Go primært.** Python kun når et bibliotek er klart mye bedre for oppgaven (microservice da).
-- **Frontend: TanStack Start**, eller enkel Vite + React hvis behovet er trivielt. **ALLTID avklar frontend-rammeverk med Svein før du velger** - ikke anta.
-- **Image: distroless** (`gcr.io/distroless/static-debian12`) for Go. Ingen shell - health checks må være innebygd binær-flagg, ikke `curl`/`CMD-SHELL`.
-- Hver Go-app er egen modul. Ingen delt root-`go.mod` med mindre vi bevisst innfører delte pakker.
+- **Backend: Go primarily.** Python only when a library is clearly much better for the task (microservice then).
+- **Frontend: TanStack Start**, or plain Vite + React if the need is trivial. **ALWAYS confirm the frontend framework with Svein before choosing** - do not assume.
+- **Image: distroless** (`gcr.io/distroless/static-debian12`) for Go. No shell - health checks must be built-in binary flags, not `curl`/`CMD-SHELL`.
+- Each Go app is its own module. No shared root `go.mod` unless we deliberately introduce shared packages.
 
-## CI/CD (build-once, deploy via API)
+## CI/CD (build once, deploy via GitOps)
 
-- Build skjer i **GitHub Actions**, ikke på Dokploy-serveren. Image pushes til **GHCR**.
-- Tre tags per image: `:latest`, `:<full-sha>`, `:<YYYY-MM-DD-shortsha>` (lesbar). Dokploy peker på den lesbare.
-- Deploy: workflow joiner tailnet (Tailscale OAuth, `tag:ci`), kaller Dokploy-API (`application.update` for å sette image-tag, så `application.deploy`). Dokploy **puller** imaget - kloner ikke repoet.
-- **Rollback:** `gh workflow run <app>.yml -f image_tag=<eksisterende-tag>` (bygger ikke, deployer eksisterende image).
-- Pin alle tredjeparts-actions til full SHA (kommentar med versjon).
-- **build-once-promote** (dev->prod): samme image-digest promoteres mellom miljøer, aldri rebuild per miljø.
+- Build happens in **GitHub Actions**, not on a deploy server. Images are pushed to **GHCR**.
+- Two tags per image: `:<full-sha>`, `:<YYYY-MM-DD-shortsha>` (readable). No `:latest` (the overlay pins the tag; `:latest` would break build-once-promote traceability).
+- Deploy is **CI-push**: on push to main, CI builds one immutable tag, writes it into the dev overlay in `kongebra-gitops` (auto), then promotes the *same* tag into the prod overlay behind a **GitHub Environment `production` required-reviewer gate**. ArgoCD syncs. (Not Image Updater - CI owns the tag now.)
+- **Rollback/promote:** `workflow_dispatch` with input `image_tag=<existing-tag>` re-promotes that tag without rebuilding (instant; image already in GHCR).
+- Pin all third-party actions to a full SHA (comment with version).
+- **build-once-promote** (dev->prod): the same image is promoted between environments, never rebuilt per environment. ADR-0001.
+- **Composable actions:** `docker-build` (build + optional push, docker-generic) and `gitops-promote` (tag -> overlay) are the reusable blocks; `_build-deploy.yml` orchestrates them.
 
-## Konvensjoner
+### PR checks (`<app>-pr.yml`) - security rules every app MUST follow
 
-- Kode-identifikatorer på engelsk. URL-paths på engelsk (letter i18n/deploy). Kommentarer kan være norsk.
-- Ikke `Co-Authored-By`-trailer i commits.
-- Ikke em-dash i tekst; bruk vanlig bindestrek.
-- Marker bevisste forenklinger med `// ponytail:`-kommentar (hva + oppgraderingssti).
+- Trigger on **`pull_request`** only - **NEVER `pull_request_target`** (it runs with repo secrets in the base context; a forked PR could exfiltrate them).
+- `permissions: contents: read` only. **No `secrets: inherit`**, no GHCR/gitops credentials.
+- Build with `docker-build` `push: false` (verify the Dockerfile builds; never pushes).
+- **Tests are per-app and language-specific** -> they live in `<app>-pr.yml`, NOT in `docker-build` (which stays docker-generic, must not know Go/TS/Python).
 
-## Lokal utvikling
+## Conventions
 
-- **Aspire (v13, polyglot)** for lokal orkestrering. AppHost authored i TypeScript (ikke C#). `aspire run` gir containerisert lokal dev + innebygd OTEL-dashboard. AppHost declarerer app + deps (Postgres/Redis) + relasjoner.
-- Status: **spike-fase** - Go er Aspires minst modne integrasjon (community-toolkit/code-gen), så valider mønsteret før det blir standard for alle apper.
-- Dokploy er ikke et førsteklasses Aspire-deploy-mål; prod går fortsatt via CI -> GHCR -> Dokploy. Aspire eier lokal dev, ikke prod-deploy (evt. emit compose-artefakt som bro).
-- **Lokal Grafana-speiling:** AppHost inkluderer `grafana/otel-lgtm`-container lokalt (samme stack som prod-`monitoring`), så Grafana/Tempo/Prometheus-skills læres lokalt med full prod-paritet. App sender OTLP dit (`OTEL_EXPORTER_OTLP_ENDPOINT` -> lokal otel-lgtm). Aspires eget dashboard er bonus oppå.
+- Code identifiers in English. URL paths in English (eases i18n/deploy). Comments may be Norwegian.
+- No `Co-Authored-By` trailer in commits.
+- No em-dash in text; use a plain hyphen.
+- Mark deliberate simplifications with a `// ponytail:` comment (what + upgrade path).
 
-## Infrastruktur (kontekst)
+## Local development
 
-- 2-node Docker Swarm: manager `dokploy` + worker `swarm-worker-1` (begge x86, Docker 29.6.0, på tailnet).
-- Hetzner Cloud Firewall `tailnet-only`: deny-all inbound utenom ICMP+UDP41641. SSH og alt annet via tailnet. Swarm-porter aldri offentlig.
-- `*.newb.no` wildcard A -> tailnet-IP `100.120.49.73`. Traefik host-router. Alt tailnet-only by default.
-- Observability: Dokploy-prosjekt `monitoring` kjører `grafana/otel-lgtm` (service `monitoring-otellgtm-qsiwan`). Grafana: `grafana.newb.no` (admin/admin). OTLP over overlay: `http://monitoring-otellgtm-qsiwan:4318`.
-- OTEL-semconv: `host.name`=swarm-node (via `NODE_HOSTNAME={{.Node.Hostname}}`), `container.id`=replica.
+- **Aspire (v13, polyglot)** for local orchestration. AppHost authored in TypeScript (not C#). `aspire run` gives containerized local dev + a built-in OTEL dashboard. The AppHost declares app + deps (Postgres/Redis) + relations.
+- Status: **spike phase** - Go is Aspire's least mature integration (community-toolkit/code-gen), so validate the pattern before it becomes standard for all apps.
+- Aspire owns local dev, not prod deploy (prod goes via CI -> GHCR -> ArgoCD). Optionally emit a compose artifact as a bridge.
+- **Local Grafana mirroring:** the AppHost includes a `grafana/otel-lgtm` container locally (same stack as the in-cluster `otel-lgtm`), so Grafana/Tempo/Prometheus skills are learned locally with full prod parity. The app sends OTLP there (`OTEL_EXPORTER_OTLP_ENDPOINT` -> local otel-lgtm).
 
-## Driftsfeller (lært på den harde måten)
+## Infrastructure (context)
 
-- **Ikke `apt install docker-ce` på manager** - restarter daemonen = nedetid (Dokploy kjører oppå den). Bruk `get.docker.com --version <x>` eller drain først.
-- **Let's Encrypt HTTP-01 ⊥ tailnet-gjemt boks** - LE trenger offentlig port 80 (FW-blokkert). Bruk `.ts.net`-URL eller DNS-01/Tailscale Serve for cert.
-- **Fine-grained PAT støtter ikke GHCR** - bruk classic PAT med `read:packages` for Dokploy registry-pull.
-- **Replicas != HA** uten styrt plassering - bruk spread-preference `node.id`, ikke hard `Max/node`.
+- Deploy target: 3-node k3s HA cluster (3x Hetzner CX33, all control-plane+etcd, Tailscale tailnet `tail63f312.ts.net`). Manifests + full state in **kongebra-gitops** (`HANDOFF.md`).
+- Apps are served on `*.newb.no` (wildcard -> cluster node tailnet IPs, tailnet-only). TLS via cert-manager wildcard cert + Traefik default TLSStore.
+- Observability: in-cluster `grafana/otel-lgtm` (`grafana.newb.no`). Apps send OTLP to `otel-lgtm.observability:4318`.
+- Hetzner Cloud Firewall `tailnet-only` (deny-all inbound except ICMP+UDP41641).
 
-## Leksjoner
+## Gotchas (learned the hard way)
 
-Læringsløpet er dokumentert som HTML-leksjoner i `~/vault/lessons/` (0001 baseline, 0002 CI/CD+swarm+observability). Oppdater når nye mønstre etableres.
+- **Let's Encrypt HTTP-01 will not work on a tailnet-hidden box** - LE needs public port 80 (firewall-blocked). Use DNS-01 (Cloudflare) for certs.
+- **Fine-grained PATs do not support GHCR** - use a classic PAT with `read:packages` for image pulls.
+- **Replicas != HA** without controlled placement - on k8s rely on the 3-node etcd quorum.
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked as GitHub issues (`kongebra/kongebra-apps`) via the `gh` CLI. External PRs are not a triage surface. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Canonical default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` + `docs/adr/` at the repo root (neither exists yet; created lazily). See `docs/agents/domain.md`.

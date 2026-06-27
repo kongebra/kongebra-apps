@@ -1,0 +1,46 @@
+# Bygger et Docker-image og pusher valgfritt til GHCR.
+# DOCKER-GENERISK: denne MÅ IKKE vite om Go/TS/Python. Tester hører hjemme i caller.
+# push=false (PR-sjekk): verifiserer kun at Dockerfile bygger, ingen GHCR-tilgang/credentials.
+# push=true (main): logger inn + pusher immutabel tag + full-sha.
+# Caller MÅ ha checket ut repoet før denne kalles (lokal action + build-context).
+name: docker-build
+description: Build a Docker image and optionally push it to GHCR (docker-generic; tests live in the caller)
+
+inputs:
+  app_dir:
+    description: "Build-context, f.eks. apps/go-hello-world"
+    required: true
+  image:
+    description: "Image uten tag, f.eks. ghcr.io/kongebra/go-hello-world"
+    required: true
+  tag:
+    description: "Ferdig-resolvet tag (caller eier tag-skjema/rollback-logikk)"
+    required: true
+  push:
+    description: "true = login + push til GHCR; false = bygg-only (PR-sjekk, ingen credentials)"
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Log in to GHCR
+      if: inputs.push == 'true'
+      uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4.2.0
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+
+    - name: Build and push image
+      uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7.2.0
+      with:
+        context: ${{ inputs.app_dir }}
+        push: ${{ inputs.push }}
+        build-args: |
+          VERSION=${{ inputs.tag }}
+        # Immutabel dato+sha-tag + full-sha for digest-stabil referanse. Ingen :latest
+        # (overlayet pinner taggen, og :latest ville bryte build-once-promote-sporbarheten).
+        tags: |
+          ${{ inputs.image }}:${{ inputs.tag }}
+          ${{ inputs.image }}:${{ github.sha }}

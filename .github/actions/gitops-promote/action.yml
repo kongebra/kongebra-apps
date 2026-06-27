@@ -51,6 +51,9 @@ runs:
       run: |
         set -euo pipefail
         cd "gitops/apps/${APP}/overlays/${ENVIRONMENT}"
+        # ponytail: promoterer på TAG (mutbar i GHCR), ikke digest. Build-once-promote er pt.
+        # tag-tillit, ikke kryptografisk. Upgrade: pin image@sha256:<digest> (krever digest-output
+        # fra docker-build threades hit). Se issue om digest-pinning.
         kustomize edit set image "${IMAGE}=${IMAGE}:${TAG}"
 
         git config user.name "kongebra-ci[bot]"
