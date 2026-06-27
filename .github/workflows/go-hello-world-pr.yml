@@ -27,6 +27,7 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
         with:
           go-version-file: apps/go-hello-world/go.mod
+          cache-dependency-path: apps/go-hello-world/go.sum  # modul ligger i app-mappa, ikke repo-rot
 
       - name: Test
         working-directory: apps/go-hello-world
