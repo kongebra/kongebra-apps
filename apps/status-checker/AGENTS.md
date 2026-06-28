@@ -6,29 +6,33 @@ Stateless, distroless, instrumentert med OpenTelemetry. Se [root AGENTS.md](../.
 
 ## Endepunkter
 
-- `GET /api/status` -> JSON array med status per target:
+- `GET /api/status` -> JSON-objekt med `checked_at` + `services`-array:
   ```json
-  [
-    {
-      "name": "go-hello-world",
-      "url": "https://hello.newb.no/health",
-      "status": "up",
-      "latency_ms": 42,
-      "http_code": 200,
-      "reason": "",
-      "last_checked": "2026-06-28T12:34:56Z"
-    }
-  ]
+  {
+    "checked_at": "2026-06-28T12:34:56Z",
+    "services": [
+      {
+        "name": "go-hello-world",
+        "url": "https://go-hello-world.newb.no",
+        "status": "up",
+        "latency_ms": 42,
+        "http_code": 200,
+        "reason": null,
+        "last_checked": "2026-06-28T12:34:56Z"
+      }
+    ]
+  }
   ```
   Mulige `status`: `up`, `down`, `unknown`.
-  `reason`: feilmelding dersom `down` (timeout, DNS, HTTP-error, osv.).
+  Nullable felt (`null` ved `up`/`unknown`): `latency_ms`, `http_code`, `reason`, `last_checked`.
+  `reason`: satt kun ved `down` (`timeout`, `conn_refused`, `tls_error`, `dns_error`, `http_4xx`, `http_5xx`, `other`).
 
 - `GET /health` -> `{"status":"ok"}` (JSON, rask, ingen deps)
 
 ## Bygg og kjør
 
 ```sh
-go run .                       # PORT=8080 default; OTEL no-op uten endpoint
+CONFIG_PATH=./targets.yaml go run .   # CONFIG_PATH påkrevd; PORT=8080 default; OTEL no-op uten endpoint
 go build -o /tmp/app .
 ```
 
@@ -41,21 +45,21 @@ Targets defineres i `targets.yaml` (referert fra `CONFIG_PATH`):
 ```yaml
 targets:
   - name: "go-hello-world"
-    url: "https://hello.newb.no/health"
-    health_path: "/health"  # alternativt: spesifikt endepunkt å probe
-  - name: "api"
-    url: "https://api.newb.no"
-    health_path: "/health"
+    url: "https://go-hello-world.newb.no"   # base-URL (domene), ikke inkl. health-path
+    health_path: "/health"                  # legges til url -> probes https://go-hello-world.newb.no/health
+  - name: "argocd"
+    url: "https://argocd.newb.no"
+    health_path: "/healthz"
 ```
 
-Kun domene-URL-er ellers `*.newb.no` godtas (sikkerhetssperring: ingen in-cluster DNS-probing).
+Kun domene-URL-er (`*.newb.no`) probes - aldri in-cluster service-DNS (tester hele brukerveien: ingress + TLS + routing).
 
 ## Env
 
 | Var | Effekt |
 |-----|--------|
 | `PORT` | lytteport (default 8080) |
-| `CONFIG_PATH` | sti til `targets.yaml` (default `./targets.yaml`) |
+| `CONFIG_PATH` | sti til `targets.yaml` (**påkrevd** - tjenesten fail-faster hvis usatt) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP-mål; **tom = OTEL av** (no-op, lokal kjøring funker) |
 | `NODE_NAME` | k8s-node (Downward API `spec.nodeName`), mappes til `k8s.node.name` |
 | `POD_NAMESPACE` | k8s-namespace (Downward API `metadata.namespace`), mappes til `k8s.namespace.name` |
