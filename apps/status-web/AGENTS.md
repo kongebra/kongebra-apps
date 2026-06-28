@@ -17,7 +17,7 @@ Nettleseren når aldri checker - CHECKER_URL er server-only.
 ## Bygg og kjør
 
 ```sh
-npm run dev        # Vite dev-server (localhost:5173)
+npm run dev        # Vite dev-server (localhost:3000)
 npm run build      # vite build -> .output/server/index.mjs (Nitro node-server)
 npm start          # node .output/server/index.mjs
 npm run typecheck  # TypeScript verify

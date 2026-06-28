@@ -15,6 +15,7 @@ on:
         description: "Eksisterende tag aa deploye (rollback/promote). Tom = bygg current."
         required: false
 
+# Caller maa grant minst det reusable-workflowen krever (repo-default er read-only).
 permissions:
   contents: read
   packages: write
