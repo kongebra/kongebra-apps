@@ -21,7 +21,7 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^6.0.3",
     "typescript": "^5.8.0",
-    "nitro": "latest",
+    "nitro": "3.0.260610-beta",
     "vite": "^8.1.0"
   }
 }
