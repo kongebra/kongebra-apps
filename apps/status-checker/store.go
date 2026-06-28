@@ -37,6 +37,7 @@ type Checker struct {
 	timeout  time.Duration
 	client   *http.Client
 	store    *Store
+	record   recordFn // valgfri: kalles etter hvert snapshot (OTEL-metrics)
 }
 
 func newChecker(targets []Target, interval, timeout time.Duration) *Checker {
@@ -71,6 +72,9 @@ func (c *Checker) runOnce(ctx context.Context) {
 	}
 	wg.Wait()
 	c.store.set(results)
+	if c.record != nil {
+		c.record(results)
+	}
 }
 
 // Run kjører en sjekk umiddelbart, så på ticker, til ctx er done.

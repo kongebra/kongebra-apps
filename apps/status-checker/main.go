@@ -114,7 +114,13 @@ func main() {
 		log.Fatalf("otel setup: %v", err)
 	}
 
+	rec, err := setupMetrics()
+	if err != nil {
+		log.Fatalf("metrics setup: %v", err)
+	}
+
 	checker := newChecker(cfg.Targets, checkInterval, checkTimeout)
+	checker.record = rec
 	go checker.Run(ctx) // poller til ctx cancelleres (SIGTERM)
 
 	mux := http.NewServeMux()
