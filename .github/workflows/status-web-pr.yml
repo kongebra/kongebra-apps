@@ -1,0 +1,37 @@
+name: status-web PR
+
+on:
+  pull_request:
+    paths:
+      - "apps/status-web/**"
+      - ".github/workflows/status-web-pr.yml"
+      - ".github/actions/docker-build/**"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/status-web/package-lock.json
+      - name: Install + typecheck + build
+        working-directory: apps/status-web
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+      - name: Build image (no push)
+        uses: ./.github/actions/docker-build
+        with:
+          app_dir: apps/status-web
+          image: ghcr.io/kongebra/status-web
+          tag: pr-${{ github.sha }}
+          push: false
