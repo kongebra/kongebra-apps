@@ -1,0 +1,6 @@
+node_modules/
+.output/
+dist/
+src/routeTree.gen.ts
+*.local
+count.txt
