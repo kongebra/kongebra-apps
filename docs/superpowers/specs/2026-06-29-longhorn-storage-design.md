@@ -1,7 +1,9 @@
 # Delsystem A: Longhorn persistent storage - design
 
 Dato: 2026-06-29.
-Status: design godkjent, ingen kode. **Handoff til infra-agent** (implementeres i `kongebra-gitops`, ikke kongebra-apps).
+Status: **SUPERSEDED 2026-06-29** - bygges IKKE. Clusteret bruker allerede **hcloud-csi** (`hcloud-volumes`, Hetzner nettverks-block-storage: overlever node-død + reattacher, ingen open-iscsi-prereq, ingen per-node-overhead). Deployet på main før denne spec-en ble vurdert. Longhorn unødvendig. CNPG/Gatus bruker `storageClass: hcloud-volumes`. gitops#6 lukket. Beholdt som dokumentasjon av storage-vurderingen.
+
+(Original handoff-design under - ikke gjeldende.)
 
 Første av tre delsystemer for status.newb.no fase 2 (persistent historikk). Avhengighet: **A (denne) → B (Postgres+Redis) → C (status-checker fase 2 app)**.
 A leverer replikert HA block storage så PVC-er overlever node-tap - grunnmuren B og all fremtidig stateful hviler på.
