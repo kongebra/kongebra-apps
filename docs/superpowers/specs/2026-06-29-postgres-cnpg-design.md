@@ -3,8 +3,10 @@
 Dato: 2026-06-29.
 Status: design godkjent (etter 5-ekspert fan-out review, ship-with-changes; Redis kuttet fra B). Ingen kode. **Handoff til infra-agent** (implementeres i `kongebra-gitops`).
 
-Andre av tre delsystemer for status.newb.no fase 2. Avhengighet: **A (Longhorn) → B (denne: Postgres) → C (status-checker fase 2 app)**.
-B leverer en persistent Postgres per env som C konsumerer for durable status-historikk. **Redis er kuttet fra B** (se Redis-beslutning nederst) - C leser nå-status rett fra PG.
+Avhengighet: **A (Longhorn) → B (denne: Postgres) → Gatus-stack**.
+B leverer en persistent Postgres per env. **Konsument endret etter pivot:** opprinnelig den custom fase-2-appen (C); nå **Gatus** (off-the-shelf, se `2026-06-29-gatus-stack-design.md`). Gatus bruker `storage.type: postgres` mot denne. B-kontrakten (secret/uri/service) er uendret - kun konsumenten + namespace er nytt.
+
+**NAMESPACE-RENAME (must-fix fra Gatus-review):** DB bor nå i `status-dev`/`status-prod` (IKKE `status-checker-*` - status-checker pensjoneres). Gatus MÅ ligge i samme namespace (CNPG-secret er namespace-lokal). Dette MÅ landes før B applyes - å flytte en CNPG Cluster på tvers av namespaces er destroy+recreate. "C eier schema" gjelder ikke lenger; Gatus eier sitt eget schema.
 
 ## Mål
 
@@ -28,7 +30,7 @@ ArgoCD Application `kongebra-gitops/platform/cloudnative-pg/`, operator i `cnpg-
 
 ### B2 - Status-databasen (per env)
 
-CNPG **Cluster-CRD** `status-db` i hver env-ns (`status-checker-dev`/`-prod`), co-lokalisert med checkeren. Nøkkel-config:
+CNPG **Cluster-CRD** `status-db` i hver env-ns (`status-dev`/`status-prod` - se merknad), co-lokalisert med Gatus (som konsumerer den). Nøkkel-config:
 - `instances: 1` (compute-HA utsatt; se oppgraderingssti).
 - `bootstrap.initdb.database: status`, `bootstrap.initdb.owner: status` (eksplisitt - default er `app`/`app`). App-rollen `status` eier sin egen DB → kan kjøre goose-migrasjoner (CREATE TABLE) **uten superuser**. `enableSuperuserAccess: false` (default).
 - `storage.storageClass: longhorn`, `storage.size: 5Gi`.

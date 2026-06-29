@@ -1,6 +1,6 @@
 # Idé: status-operator (auto-discovery av monitorerte tjenester)
 
-Status: **parkert idé**, ikke besluttet, ingen kode. Plukk opp etter status.newb.no er live (fase 1-4).
+Status: **AVLØST / lukket 2026-06-29**. Bygges IKKE. Det som finnes hyllevare: **home-operations/gatus-sidecar** (Go, watcher Traefik IngressRoute first-class + Ingress/Service/HTTPRoute, annotation `gatus.home-operations.com/enabled`, genererer Gatus-config via shared-volume atomic writes - aktivt vedlikeholdt). Status-stacken ble pivotert til Gatus + gatus-sidecar (begge hyllevare) - se `docs/superpowers/specs/2026-06-29-gatus-stack-design.md`. Denne idéen (custom k8s-operator) ville reimplementert en moden, vedlikeholdt ting → buy-over-build vant. Beholdt som dokumentasjon av beslutningen + mønsteret (annotation→config-generering) for et evt. genuint novelt fremtidig operator-prosjekt.
 Dato: 2026-06-29.
 
 ## Problemet
