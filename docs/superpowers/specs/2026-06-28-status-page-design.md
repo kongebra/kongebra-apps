@@ -28,8 +28,10 @@ Dette er **app #2** på k3s-laben og setter **templaten for Go + TanStack Start-
 | 2 - State | Postgres, lagre sjekk-historikk, uptime-% (24t/7d/30d) + historikk-strip | Stateful workload: PVC/StatefulSet/backup |
 | 3 - Incidents | Utled nedetid-perioder fra historikk, tidslinje | Domenelogikk + UI |
 | 4 - Varsling | Telegram-push ved statusendring | Outbound + delt notify-modul |
+| 5 - Auto-discovery | k8s-operator utleder targets fra annoterte IngressRoutes (erstatter statisk ConfigMap) | k8s operator/controller, CRD/RBAC, reconcile |
 
 Hver fase = egen spec → plan → bygg, deployes og verifiseres live før neste.
+Fase 5 er en parkert idé - se `docs/ideas/status-operator.md`.
 
 ## Arkitektur (to tjenester)
 
