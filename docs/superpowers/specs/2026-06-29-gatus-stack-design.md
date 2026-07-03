@@ -72,3 +72,32 @@ CNPG Postgres + per-env (2 Gatus + 2 PG) er tyngre enn Gatus alene trenger (SQLi
 
 - A: `2026-06-29-longhorn-storage-design.md`. B: `2026-06-29-postgres-cnpg-design.md` (oppdateres med namespace-rename). Fase 1 (pensjoneres): `2026-06-28-status-page-design.md`.
 - gatus-sidecar: home-operations/gatus-sidecar (Go, Traefik IngressRoute first-class, annotation `gatus.home-operations.com/enabled`, shared-volume atomic writes).
+
+---
+
+## Implementeringsreview (2026-07-03, infra-agent, før implementering)
+
+Designet holder - hyllevare-pivoten, must-fix-panelet og cutover-sekvensen står seg. Men 3 beslutninger tatt ETTER designdatoen endrer detaljer, + verifiserte fakta:
+
+### Divergens fra live state / nyere beslutninger
+
+1. **Must-fix 4 (ns-rename) er moot:** B landet som `status-web-db` i `status-web-dev/prod` (konsument = fase-1-appen selv). Gatus får i stedet en NY `status-db` i `status-dev/status-prod` - namespacene genereres av ApplicationSet fra `apps/status/overlays/*`. Ingen rename, ingen destroy/recreate (Gatus-historikk starter fra null, jf. yagni-notatet). Gamle DB-er/ns dør i dekommisjoneringen.
+2. **expose-public (beslutning 2026-07-01) mangler i cutover-planen:** status.newb.no er PUBLIC via external-dns-annotasjoner + CF Tunnel. Den atomiske cutover-committen må flytte `_components/expose-public` OG Host() sammen - ellers sletter external-dns (`policy: sync`) CNAME-en → public outage.
+3. **S-9 (apps-project tightening 2026-07-01):** apps-prosjektet tillater ingen cluster-scoped ressurser unntatt Namespace → sidecar sin ClusterRole/CRB legges i `platform/status-rbac/` (platform-prosjektet). Bevarer grensen: en app kan ikke selv-innvilge API-tilgang.
+4. **NetworkPolicy manglet i designet:** Gatus arver status-checkers A2-lockdown (DNAT-gotchas) + to NYE flows: 5432 → status-db (samme ns) og 6443 → kube-apiserver (sidecar-watch; API = nodeIP:6443, ikke pod-DNAT → ipBlock 100.64.0.0/10 matcher).
+
+### Verifiserte fakta
+
+5. **Gatus-image kjører som root** (Config.User tom) → `runAsUser: 65532` i base. Sidecar-image alt 65532. Pins: gatus v5.36.0, sidecar 0.3.6, digests i manifestene.
+6. **Annotation-only mode krever eksplisitt `--enable-ingressroute`**; RBAC-minimum = kun traefik.io/ingressroutes get/list/watch.
+7. **hardened-workload setter automountServiceAccountToken:false** → projected serviceAccountToken-volum montert KUN i sidecar; gatus-containeren forblir token-løs.
+8. **Boot-rekkefølge:** Gatus krever >=1 endpoint før sidecar-fila finnes → statisk self-endpoint (localhost:8080/health) i base-config. Dekker self-watch.
+9. **CoreDNS-prereq oppfylt by design:** ingen newb.no-override finnes; `*.newb.no` er offentlig wildcard-DNS → tailnet-IP-er. CF-proxied hosts løses til CF-edge (derav CF-ranges i netpol).
+10. **Ekstern heartbeat:** ServiceMonitor (kps cluster-wide discovery verifisert) + PrometheusRule GatusDown/absent i platform/observability.
+
+### Bevisste avvik
+
+- **Raw kustomize i apps/status/, ikke Helm** (charten har sidecarContainers, men golden path gir ns-navn, hardened-workload/stateful/limitrange, netpol+CNPG i én kustomization).
+- **strategy: Recreate** (RollingUpdate = kortvarig 2 instanser = dobbel probing/skriving).
+- **Dev+prod sidecars ser samme annoterte IngressRoutes** (cluster-wide watch) - begge dashboards viser alt, akseptert lab-egenskap.
+- **Soak kortes ned** (Svein 2026-07-03): dekommisjonering rett etter verifisert cutover, ikke 48t.
