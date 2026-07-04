@@ -34,7 +34,7 @@ runs:
 
     - name: Install kustomize
       shell: bash
-      # ponytail: pinnet v5.4.3; bump naar et overlay trenger nyere kustomize-felter
+      # ponytail: pinnet v5.4.3; bump når et overlay trenger nyere kustomize-felter
       run: |
         curl -sSL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz" \
           | sudo tar xz -C /usr/local/bin kustomize
@@ -68,7 +68,7 @@ runs:
         fi
         git commit -m "promote ${APP} -> ${ENVIRONMENT} (${TAG} ${DIGEST})"
 
-        # rebase-retry mot samtidige pushes fra andre apper paa delt gitops-main
+        # rebase-retry mot samtidige pushes fra andre apper på delt gitops-main
         for attempt in 1 2 3; do
           git pull --rebase origin main && git push origin main && exit 0
           echo "push-forsoek ${attempt} feilet, prover igjen..."
