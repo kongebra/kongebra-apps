@@ -15,7 +15,7 @@ on:
         description: "Eksisterende tag aa deploye, f.eks. 2026-06-25-9571da7 (rollback/promote). Tom = bygg current."
         required: false
 
-# Caller maa grant minst det reusable-workflowen krever (repo-default er read-only).
+# Caller må gi minst det reusable-workflowen krever (repo-default er read-only).
 permissions:
   contents: read
   packages: write
