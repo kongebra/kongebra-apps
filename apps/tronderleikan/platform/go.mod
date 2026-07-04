@@ -1,6 +1,6 @@
 module github.com/kongebra/kongebra-apps/apps/tronderleikan/platform
 
-go 1.26.1
+go 1.26.4
 
 require github.com/kongebra/kongebra-apps/apps/tronderleikan/pkg v0.0.0
 
