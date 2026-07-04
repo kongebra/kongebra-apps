@@ -43,3 +43,17 @@ func TestBusPublishToNobodyDoesNotBlock(t *testing.T) {
 		t.Fatal("publish blocked")
 	}
 }
+
+func TestBusCancelIsIdempotent(t *testing.T) {
+	b := NewBus()
+	_, cancel := b.Subscribe(1)
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("cancel panicked: %v", r)
+		}
+	}()
+	cancel()
+	cancel() // Should not panic
+	// Verify that a subsequent Publish does not panic
+	b.Publish(1, module.Event{Stage: "test"})
+}

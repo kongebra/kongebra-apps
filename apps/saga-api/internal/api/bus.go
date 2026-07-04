@@ -26,16 +26,19 @@ func (b *Bus) Subscribe(jobID int64) (<-chan module.Event, func()) {
 	}
 	b.subs[jobID][ch] = struct{}{}
 	b.mu.Unlock()
+	var once sync.Once
 	cancel := func() {
-		b.mu.Lock()
-		if set, ok := b.subs[jobID]; ok {
-			delete(set, ch)
-			if len(set) == 0 {
-				delete(b.subs, jobID)
+		once.Do(func() {
+			b.mu.Lock()
+			if set, ok := b.subs[jobID]; ok {
+				delete(set, ch)
+				if len(set) == 0 {
+					delete(b.subs, jobID)
+				}
 			}
-		}
-		b.mu.Unlock()
-		close(ch)
+			b.mu.Unlock()
+			close(ch)
+		})
 	}
 	return ch, cancel
 }
