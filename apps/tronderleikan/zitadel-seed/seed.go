@@ -54,8 +54,12 @@ type Directory interface {
 	// EnsureProjectRole er idempotent: tåler at rollen finnes fra før.
 	EnsureProjectRole(ctx context.Context, orgID, projectID string, role RoleDef) error
 
-	FindProjectGrant(ctx context.Context, ownerOrgID, projectID, grantedOrgID string) (grantID string, found bool, err error)
+	// FindProjectGrant returnerer også grantets nåværende roller, så Seeder kan
+	// konvergere rollesettet (ikke bare eksistensen).
+	FindProjectGrant(ctx context.Context, ownerOrgID, projectID, grantedOrgID string) (grantID string, currentRoles []string, found bool, err error)
 	CreateProjectGrant(ctx context.Context, ownerOrgID, projectID, grantedOrgID string, roleKeys []string) (grantID string, err error)
+	// UpdateProjectGrant setter grantets rollesett (brukes når det avviker).
+	UpdateProjectGrant(ctx context.Context, ownerOrgID, projectID, grantID string, roleKeys []string) error
 
 	FindUserByEmail(ctx context.Context, orgID, email string) (id string, found bool, err error)
 	CreateUser(ctx context.Context, orgID string, user UserSpec, password string) (id string, err error)
@@ -188,12 +192,21 @@ func (s *Seeder) ensureProject(ctx context.Context, orgID, name string) (string,
 }
 
 func (s *Seeder) ensureProjectGrant(ctx context.Context, ownerOrgID, projectID, grantedOrgID string, roleKeys []string) (string, error) {
-	id, found, err := s.dir.FindProjectGrant(ctx, ownerOrgID, projectID, grantedOrgID)
+	id, currentRoles, found, err := s.dir.FindProjectGrant(ctx, ownerOrgID, projectID, grantedOrgID)
 	if err != nil {
 		return "", err
 	}
 	if found {
-		s.log("project-grant exists: %s -> %s (%s)", projectID, grantedOrgID, id)
+		// Konvergér: et eksisterende grant med feil/ufullstendig rollesett skal
+		// rettes opp, ikke bare aksepteres.
+		if sameStringSet(currentRoles, roleKeys) {
+			s.log("project-grant exists: %s -> %s (%s)", projectID, grantedOrgID, id)
+			return id, nil
+		}
+		if err := s.dir.UpdateProjectGrant(ctx, ownerOrgID, projectID, id, roleKeys); err != nil {
+			return "", err
+		}
+		s.log("project-grant roles converged: %s -> %s (%s): %v -> %v", projectID, grantedOrgID, id, currentRoles, roleKeys)
 		return id, nil
 	}
 	id, err = s.dir.CreateProjectGrant(ctx, ownerOrgID, projectID, grantedOrgID, roleKeys)
@@ -202,6 +215,23 @@ func (s *Seeder) ensureProjectGrant(ctx context.Context, ownerOrgID, projectID, 
 	}
 	s.log("project-grant created: %s -> %s (%s)", projectID, grantedOrgID, id)
 	return id, nil
+}
+
+// sameStringSet sier om a og b inneholder nøyaktig de samme elementene
+// (rekkefølge og duplikater ignorert).
+func sameStringSet(a, b []string) bool {
+	set := make(map[string]struct{}, len(a))
+	for _, v := range a {
+		set[v] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(b))
+	for _, v := range b {
+		if _, ok := set[v]; !ok {
+			return false
+		}
+		seen[v] = struct{}{}
+	}
+	return len(seen) == len(set)
 }
 
 func (s *Seeder) ensureUser(ctx context.Context, orgID string, u UserSpec, password string) (string, error) {

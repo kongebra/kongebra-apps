@@ -137,19 +137,31 @@ func (d *zitadelDirectory) EnsureProjectRole(ctx context.Context, orgID, project
 	return nil
 }
 
-func (d *zitadelDirectory) FindProjectGrant(ctx context.Context, ownerOrgID, projectID, grantedOrgID string) (string, bool, error) {
+func (d *zitadelDirectory) FindProjectGrant(ctx context.Context, ownerOrgID, projectID, grantedOrgID string) (string, []string, bool, error) {
 	resp, err := d.api.ManagementService().ListProjectGrants(inOrg(ctx, ownerOrgID), &managementpb.ListProjectGrantsRequest{
 		ProjectId: projectID,
 	})
 	if err != nil {
-		return "", false, fmt.Errorf("list project grants: %w", err)
+		return "", nil, false, fmt.Errorf("list project grants: %w", err)
 	}
 	for _, g := range resp.GetResult() {
 		if g.GetGrantedOrgId() == grantedOrgID {
-			return g.GetGrantId(), true, nil
+			return g.GetGrantId(), g.GetGrantedRoleKeys(), true, nil
 		}
 	}
-	return "", false, nil
+	return "", nil, false, nil
+}
+
+func (d *zitadelDirectory) UpdateProjectGrant(ctx context.Context, ownerOrgID, projectID, grantID string, roleKeys []string) error {
+	_, err := d.api.ManagementService().UpdateProjectGrant(inOrg(ctx, ownerOrgID), &managementpb.UpdateProjectGrantRequest{
+		ProjectId: projectID,
+		GrantId:   grantID,
+		RoleKeys:  roleKeys,
+	})
+	if err != nil {
+		return fmt.Errorf("update project grant: %w", err)
+	}
+	return nil
 }
 
 func (d *zitadelDirectory) CreateProjectGrant(ctx context.Context, ownerOrgID, projectID, grantedOrgID string, roleKeys []string) (string, error) {

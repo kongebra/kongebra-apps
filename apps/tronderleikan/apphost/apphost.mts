@@ -75,6 +75,10 @@ const zitadelMasterkey = builder.addParameter('zitadel-masterkey', {
 // nytt hver oppstart, og den idempotente seeden bygger tilstanden opp igjen.
 const zitadelPatDir = path.join(apphostDir, '.zitadel');
 const zitadelPatFile = path.join(zitadelPatDir, 'pat.txt');
+// PAT-utløp: now+30d. Kort levetid selv om det bare er en lokal dev-token -
+// state er flyktig (ny PAT hver aspire run), og 30d gir buffer for langlevde
+// dev-sesjoner uten å etterlate en de-facto evig token.
+const zitadelPatExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
 const zitadel = builder
   .addContainer('zitadel', 'ghcr.io/zitadel/zitadel:v4.15.3')
@@ -83,7 +87,7 @@ const zitadel = builder
   // FirstInstance: machine-user (IAM_OWNER) + PAT skrevet til bind-mountet fil.
   .withEnvironment('ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_USERNAME', 'zitadel-admin-sa')
   .withEnvironment('ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_NAME', 'Seed Admin')
-  .withEnvironment('ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_EXPIRATIONDATE', '2099-01-01T00:00:00Z')
+  .withEnvironment('ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_EXPIRATIONDATE', zitadelPatExpiry)
   .withEnvironment('ZITADEL_FIRSTINSTANCE_PATPATH', '/machinekey/pat.txt')
   .withBindMount(zitadelPatDir, '/machinekey')
   .withEnvironment('ZITADEL_DATABASE_POSTGRES_HOST', postgres.host())

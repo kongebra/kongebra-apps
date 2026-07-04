@@ -173,6 +173,18 @@ func parseTarget(rawURL string) (Target, error) {
 	default:
 		return Target{}, fmt.Errorf("ustøttet skjema %q (bruk http eller https)", u.Scheme)
 	}
+	// Kun host[:port] brukes videre (zitadel-go tar domain+port). Path/query/
+	// fragment ville blitt svelget stille - feil tidlig i stedet, så en feilaktig
+	// URL (f.eks. med sti eller query) ikke maskerer en konfig-tabbe.
+	if u.Path != "" && u.Path != "/" {
+		return Target{}, fmt.Errorf("URL %q skal ikke ha sti (%q) - kun skjema://host[:port]", rawURL, u.Path)
+	}
+	if u.RawQuery != "" {
+		return Target{}, fmt.Errorf("URL %q skal ikke ha query - kun skjema://host[:port]", rawURL)
+	}
+	if u.Fragment != "" {
+		return Target{}, fmt.Errorf("URL %q skal ikke ha fragment - kun skjema://host[:port]", rawURL)
+	}
 	port := u.Port()
 	if port == "" {
 		if tls {

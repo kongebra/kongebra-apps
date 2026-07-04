@@ -78,9 +78,18 @@ func (f *fakeDirectory) EnsureProjectRole(_ context.Context, orgID, projectID st
 	return nil
 }
 
-func (f *fakeDirectory) FindProjectGrant(_ context.Context, ownerOrgID, projectID, grantedOrgID string) (string, bool, error) {
+func (f *fakeDirectory) FindProjectGrant(_ context.Context, ownerOrgID, projectID, grantedOrgID string) (string, []string, bool, error) {
 	id, ok := f.grants[ownerOrgID+"/"+projectID+"/"+grantedOrgID]
-	return id, ok, nil
+	if !ok {
+		return "", nil, false, nil
+	}
+	return id, f.grantRoles[id], true, nil
+}
+
+func (f *fakeDirectory) UpdateProjectGrant(_ context.Context, _, _, grantID string, roleKeys []string) error {
+	f.grantRoles[grantID] = roleKeys
+	f.createdCount["grantUpdate"]++
+	return nil
 }
 
 func (f *fakeDirectory) CreateProjectGrant(_ context.Context, ownerOrgID, projectID, grantedOrgID string, roleKeys []string) (string, error) {
@@ -196,6 +205,50 @@ func TestSeedCreatesExpectedState(t *testing.T) {
 	}
 	if fake.createdCount["userGrant"] != 3 {
 		t.Fatalf("vil ha 3 user-grants, fikk %d", fake.createdCount["userGrant"])
+	}
+}
+
+// Et eksisterende project-grant med feil/ufullstendig rollesett skal
+// konvergere til ønsket sett - ikke bare aksepteres (Copilot-funn).
+func TestSeedConvergesProjectGrantRoles(t *testing.T) {
+	fake := newFakeDirectory()
+	cfg := testConfig()
+	ctx := context.Background()
+
+	res, err := NewSeeder(fake, nil).Seed(ctx, cfg)
+	if err != nil {
+		t.Fatalf("første seed: %v", err)
+	}
+	grantID := res.ProjectGrantID
+
+	// Korrupt tilstand: grantet mangler roller.
+	fake.grantRoles[grantID] = []string{authn.RolePlayer}
+
+	if _, err := NewSeeder(fake, nil).Seed(ctx, cfg); err != nil {
+		t.Fatalf("andre seed: %v", err)
+	}
+
+	if got := fake.grantRoles[grantID]; !sameStringSet(got, tenantGrantableRoles) {
+		t.Fatalf("grant-roller konvergerte ikke: fikk %v, vil ha %v", got, tenantGrantableRoles)
+	}
+	if fake.createdCount["grantUpdate"] != 1 {
+		t.Fatalf("vil ha nøyaktig 1 grant-update, fikk %d", fake.createdCount["grantUpdate"])
+	}
+	if fake.createdCount["grant"] != 1 {
+		t.Fatalf("skal ikke opprette nytt grant ved konvergering, fikk %d", fake.createdCount["grant"])
+	}
+}
+
+// sameStringSet: rekkefølge/duplikater skal ikke påvirke likhet.
+func TestSameStringSet(t *testing.T) {
+	if !sameStringSet([]string{"a", "b"}, []string{"b", "a"}) {
+		t.Fatal("lik uansett rekkefølge")
+	}
+	if sameStringSet([]string{"a"}, []string{"a", "b"}) {
+		t.Fatal("delmengde er ikke lik")
+	}
+	if sameStringSet([]string{"a", "b"}, []string{"a"}) {
+		t.Fatal("supersett er ikke lik")
 	}
 }
 
