@@ -1,0 +1,24 @@
+# Per-tjeneste fallback for platform (SPEC §12): kun tjenestens egne avhengigheter,
+# for en agent som jobber på platform alene uten hele Aspire-flåten.
+# Hele produktet lokalt: bruk apps/tronderleikan/apphost (aspire run). Se docs/LOCAL-DEV.md.
+# ponytail: postgres + nats holder for platform; Zitadel/otel kjøres via Aspire ved behov.
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: platform
+      POSTGRES_DB: platform
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  nats:
+    image: nats:2.11
+    command: ["-js"] # JetStream
+    ports:
+      - "4222:4222"
