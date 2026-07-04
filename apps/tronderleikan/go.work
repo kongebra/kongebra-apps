@@ -5,4 +5,5 @@ go 1.26.4
 use (
 	./pkg
 	./platform
+	./zitadel-seed
 )

@@ -67,10 +67,29 @@ const zitadelMasterkey = builder.addParameter('zitadel-masterkey', {
   secret: true,
 });
 
+// Seed-scriptet (pakke 0.4) trenger API-credentials. Zitadel FirstInstance
+// oppretter en machine-user (IAM_OWNER) og skriver dens PAT til en fil ved init.
+// Vi bind-mounter en host-mappe inn i containeren slik at seed-executablen (som
+// kjører på host, ikke i container) kan lese PAT-en. Mappen er flyktig (som resten
+// av lokal state) og gitignore-t. Ingen data-volume -> FirstInstance kjører på
+// nytt hver oppstart, og den idempotente seeden bygger tilstanden opp igjen.
+const zitadelPatDir = path.join(apphostDir, '.zitadel');
+const zitadelPatFile = path.join(zitadelPatDir, 'pat.txt');
+// PAT-utløp: now+30d. Kort levetid selv om det bare er en lokal dev-token -
+// state er flyktig (ny PAT hver aspire run), og 30d gir buffer for langlevde
+// dev-sesjoner uten å etterlate en de-facto evig token.
+const zitadelPatExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
 const zitadel = builder
   .addContainer('zitadel', 'ghcr.io/zitadel/zitadel:v4.15.3')
   .withArgs(['start-from-init', '--masterkeyFromEnv', '--tlsMode', 'disabled'])
   .withEnvironment('ZITADEL_MASTERKEY', zitadelMasterkey)
+  // FirstInstance: machine-user (IAM_OWNER) + PAT skrevet til bind-mountet fil.
+  .withEnvironment('ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_USERNAME', 'zitadel-admin-sa')
+  .withEnvironment('ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_NAME', 'Seed Admin')
+  .withEnvironment('ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_EXPIRATIONDATE', zitadelPatExpiry)
+  .withEnvironment('ZITADEL_FIRSTINSTANCE_PATPATH', '/machinekey/pat.txt')
+  .withBindMount(zitadelPatDir, '/machinekey')
   .withEnvironment('ZITADEL_DATABASE_POSTGRES_HOST', postgres.host())
   .withEnvironment('ZITADEL_DATABASE_POSTGRES_PORT', postgres.port())
   .withEnvironment('ZITADEL_DATABASE_POSTGRES_DATABASE', 'zitadel')
@@ -89,11 +108,25 @@ const zitadel = builder
   .withHttpHealthCheck({ path: '/debug/healthz' })
   .waitFor(postgres);
 
-// Zitadel-seed (arbeidspakke 0.4) hektes på her når scriptet finnes:
-// const zitadelSeed = builder
-//   .addExecutable('zitadel-seed', 'go', serviceDir('zitadel-seed'), ['run', '.'])
-//   .withEnvironment('ZITADEL_API_URL', zitadel.getEndpoint('http'))
-//   .waitFor(zitadel);
+// ---------------------------------------------------------------------------
+// Zitadel-seed (arbeidspakke 0.4): idempotent provisjonering av plattform-org,
+// project `tronderleikan`, de 4 rollene, test-tenant-org m/grant og testbrukere
+// (SPEC §5, §6, §12). Issuer/domenet leses fra ZITADEL_API_URL (aldri hardkodet).
+// Credentials: PAT-fila FirstInstance skrev (bind-mount over). Testbruker-passord
+// er en lokal dev-verdi (parameter, ikke i Go-koden).
+// ---------------------------------------------------------------------------
+const seedTestPassword = builder.addParameter('seed-test-password', {
+  value: 'Password1!', // lokal dev, oppfyller Zitadels default kompleksitet
+  secret: true,
+});
+
+const zitadelSeed = builder
+  .addExecutable('zitadel-seed', 'go', serviceDir('zitadel-seed'), ['run', '.'])
+  .withEnvironment('ZITADEL_API_URL', zitadel.getEndpoint('http'))
+  .withEnvironment('ZITADEL_PAT_FILE', zitadelPatFile)
+  .withEnvironment('SEED_TEST_PASSWORD', seedTestPassword)
+  .waitFor(zitadel);
+void zitadelSeed;
 
 // ---------------------------------------------------------------------------
 // Go-tjenestene. Kun platform er planlagt i fase 1 (pakke 1.1); mappen finnes
