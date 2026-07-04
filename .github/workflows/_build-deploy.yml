@@ -25,6 +25,11 @@ on:
         required: false
         type: string
         default: ""
+      dockerfile:
+        description: "Sti til Dockerfile fra repo-rot. Tom = <app_dir>/Dockerfile. For apper der context != Dockerfile-mappe (delt modul-context)."
+        required: false
+        type: string
+        default: ""
 
 # build trenger packages:write for GHCR-push. deploy-jobbene pusher til gitops-repoet
 # via GITOPS_DEPLOY_KEY (ssh), ikke GITHUB_TOKEN, saa de bryr seg ikke om disse.
@@ -61,6 +66,7 @@ jobs:
         uses: ./.github/actions/docker-build
         with:
           app_dir: ${{ inputs.app_dir }}
+          dockerfile: ${{ inputs.dockerfile }}
           image: ${{ inputs.image }}
           tag: ${{ steps.tag.outputs.tag }}
           push: true
