@@ -1,8 +1,9 @@
-go 1.26.1
+go 1.26.4
 
 // Tjenestene bruker pkg via require + replace i egen go.mod (fungerer i Docker
 // uten workspace); go.work gir samlet lokal utvikling på tvers av modulene.
 use (
 	./pkg
 	./platform
+	./zitadel-seed
 )
