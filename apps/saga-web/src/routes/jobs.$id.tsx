@@ -38,11 +38,12 @@ function JobPage() {
   const [tokens, setTokens] = useState<string>("") // streamed reduce tokens
   const tokensRef = useRef("")
 
-  // Open an SSE stream while the job is not terminal. The browser reaches
-  // /api/events directly (same origin via ingress). On terminal, re-fetch the
-  // full job to get result_markdown, then close.
+  // Open an SSE stream once per job page, only if not already terminal at mount.
+  // Depending on `job` here would reconnect on every snapshot (the first SSE
+  // message is a full Job) -> infinite loop; so guard on the loader's `initial`
+  // and key the effect on [id] alone.
   useEffect(() => {
-    if (!job || isTerminal(job.status)) return
+    if (!initial || isTerminal(initial.status)) return
     const es = new EventSource(`/api/events?job=${id}`)
     let snapshotSeen = false
     es.onmessage = (e) => {
@@ -62,15 +63,13 @@ function JobPage() {
       }
       if (ev.stage === "done" || ev.stage === "failed") {
         es.close()
-        // pull the final job (result_markdown / error) via the loader path
-        router.invalidate().then(() => {
-          getJobClient(Number(id)).then((j) => j && setJob(j))
-        })
+        // pull the final job (result_markdown / error) directly from the API
+        getJobClient(Number(id)).then((j) => j && setJob(j))
       }
     }
     es.onerror = () => es.close()
     return () => es.close()
-  }, [id, job, router])
+  }, [id])
 
   if (!job) {
     return (
@@ -81,14 +80,20 @@ function JobPage() {
   }
 
   const title = typeof job.input.url === "string" ? job.input.url : `job ${job.id}`
+  const url = typeof job.input.url === "string" ? job.input.url : null
+  const safeHref = url && /^https?:\/\//i.test(url) ? url : undefined
 
   return (
     <Shell>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
         <StatusPill status={job.status} />
-        <a href={title} target="_blank" rel="noreferrer" style={{ color: "#0969da", wordBreak: "break-all" }}>
-          {title}
-        </a>
+        {safeHref ? (
+          <a href={safeHref} target="_blank" rel="noreferrer" style={{ color: "#0969da", wordBreak: "break-all" }}>
+            {title}
+          </a>
+        ) : (
+          <span style={{ wordBreak: "break-all" }}>{title}</span>
+        )}
       </div>
 
       {!isTerminal(job.status) && (
