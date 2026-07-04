@@ -16,6 +16,10 @@ inputs:
   tag:
     description: "Ferdig-resolvet tag (caller eier tag-skjema/rollback-logikk)"
     required: true
+  dockerfile:
+    description: "Sti til Dockerfile fra repo-rot. Tom = <app_dir>/Dockerfile (default). Trengs når Dockerfile ikke ligger i context-rota (f.eks. delt modul-context i produkt-suiter)."
+    required: false
+    default: ""
   push:
     description: "true = login + push til GHCR; false = bygg-only (PR-sjekk, ingen credentials)"
     required: false
@@ -41,6 +45,8 @@ runs:
       uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7.2.0
       with:
         context: ${{ inputs.app_dir }}
+        # tom streng = build-push-action sin default ({context}/Dockerfile)
+        file: ${{ inputs.dockerfile }}
         push: ${{ inputs.push }}
         # SLSA-provenance + SBOM-attestasjon, kun ved push (attestasjon krever registry).
         provenance: ${{ inputs.push }}
