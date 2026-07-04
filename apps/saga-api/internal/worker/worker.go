@@ -66,7 +66,11 @@ func ProcessOne(ctx context.Context, pool *pgxpool.Pool, deps module.Deps, bus *
 	if !ok {
 		// ponytail: unknown module goes through the normal retry dance and
 		// parks as failed after MaxAttempts; add a queue.FailHard if a second
-		// permanent-error case ever shows up.
+		// permanent-error case ever shows up. This means the first hit can
+		// emit a non-terminal "failed" here (unlike the module-error branch
+		// below, which distinguishes retrying/failed) - self-corrects once
+		// attempts reach MaxAttempts, acceptable since an unknown module
+		// never becomes known between retries.
 		msg := fmt.Sprintf("unknown module %q", job.Module)
 		if err := queue.Fail(ctx, pool, job.ID, msg); err != nil {
 			return true, err
@@ -98,7 +102,15 @@ func ProcessOne(ctx context.Context, pool *pgxpool.Pool, deps module.Deps, bus *
 		if ferr := queue.Fail(ctx, pool, job.ID, err.Error()); ferr != nil {
 			return true, ferr
 		}
-		bus.Publish(job.ID, module.Event{Stage: "failed", Detail: err.Error()})
+		// queue.Fail requeues while attempts remain; only the terminal attempt
+		// parks the job as failed. Emit a terminal "failed" only then, so the
+		// web UI (which closes its SSE stream on "failed") keeps streaming
+		// across auto-retries and sees "retrying" instead.
+		stage := "retrying"
+		if job.Attempts >= queue.MaxAttempts {
+			stage = "failed"
+		}
+		bus.Publish(job.ID, module.Event{Stage: stage, Detail: err.Error()})
 		return true, nil
 	}
 	if err := queue.Complete(ctx, pool, job.ID, md); err != nil {
