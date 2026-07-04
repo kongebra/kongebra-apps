@@ -25,6 +25,15 @@ func (f fakeFetcher) Fetch(ctx context.Context, url string) (ytdlp.Video, error)
 	return f.video, f.err
 }
 
+// hangingFetcher simulates a stuck yt-dlp process: it blocks until the
+// context passed to Fetch is cancelled, then returns the context's error.
+type hangingFetcher struct{}
+
+func (hangingFetcher) Fetch(ctx context.Context, url string) (ytdlp.Video, error) {
+	<-ctx.Done()
+	return ytdlp.Video{}, ctx.Err()
+}
+
 // fakeLLM answers every chat with a canned string.
 func fakeLLM(t *testing.T, reply string) *llm.Client {
 	t.Helper()
@@ -86,6 +95,19 @@ func TestRunFetchErrorPropagates(t *testing.T) {
 		json.RawMessage(`{"url":"u"}`), deps(t, f, "x"), func(module.Event) {})
 	if err == nil || !strings.Contains(err.Error(), "no captions") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestRunFetchTimeout(t *testing.T) {
+	d := deps(t, hangingFetcher{}, "x")
+	d.ChunkTimeout = 50 * time.Millisecond
+	_, err := Module{}.Run(context.Background(),
+		json.RawMessage(`{"url":"u"}`), d, func(module.Event) {})
+	if err == nil {
+		t.Fatal("want error when fetch exceeds ChunkTimeout")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
 	}
 }
 

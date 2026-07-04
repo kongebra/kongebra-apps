@@ -118,6 +118,52 @@ func TestRequeueStaleTerminalSetsFinishedAt(t *testing.T) {
 	}
 }
 
+func TestCompleteAndFailOnlyAffectRunning(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+
+	id, _ := Enqueue(ctx, pool, "yt-summary", []byte(`{}`))
+	job, err := Claim(ctx, pool)
+	if err != nil || job == nil {
+		t.Fatalf("claim: job=%+v err=%v", job, err)
+	}
+	if err := Complete(ctx, pool, job.ID, "the result"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := Get(ctx, pool, id)
+	if got.Status != "done" || got.ResultMarkdown == nil || *got.ResultMarkdown != "the result" {
+		t.Fatalf("after Complete on running job: %+v", got)
+	}
+
+	id2, _ := Enqueue(ctx, pool, "yt-summary", []byte(`{}`))
+	job2, err := Claim(ctx, pool)
+	if err != nil || job2 == nil {
+		t.Fatalf("claim: job=%+v err=%v", job2, err)
+	}
+	// Simulate the job having been rescued and reclaimed by another worker
+	// (e.g. RequeueStale ran, then a different worker claimed it) while the
+	// original slow worker is still holding a reference to it.
+	if _, err := pool.Exec(ctx, `UPDATE jobs SET status = 'queued' WHERE id = $1`, job2.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Complete(ctx, pool, job2.ID, "should not land"); err != nil {
+		t.Fatal(err)
+	}
+	got2, _ := Get(ctx, pool, id2)
+	if got2.Status != "queued" || got2.ResultMarkdown != nil {
+		t.Fatalf("Complete must be a no-op on a non-running job: %+v", got2)
+	}
+
+	if err := Fail(ctx, pool, job2.ID, "should not land either"); err != nil {
+		t.Fatal(err)
+	}
+	got3, _ := Get(ctx, pool, id2)
+	if got3.Status != "queued" || got3.Error != nil {
+		t.Fatalf("Fail must be a no-op on a non-running job: %+v", got3)
+	}
+}
+
 func TestRetryResetsFailedJob(t *testing.T) {
 	ctx := context.Background()
 	pool := testPool(t)

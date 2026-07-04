@@ -79,7 +79,7 @@ func Complete(ctx context.Context, pool *pgxpool.Pool, id int64, markdown string
 	_, err := pool.Exec(ctx, `
 		UPDATE jobs SET status = 'done', result_markdown = $2,
 			finished_at = now(), error = NULL, progress = ''
-		WHERE id = $1`, id, markdown)
+		WHERE id = $1 AND status = 'running'`, id, markdown)
 	return err
 }
 
@@ -91,7 +91,7 @@ func Fail(ctx context.Context, pool *pgxpool.Pool, id int64, msg string) error {
 			error = $3,
 			finished_at = CASE WHEN attempts >= $2 THEN now() ELSE NULL END,
 			lease_at = NULL
-		WHERE id = $1`, id, MaxAttempts, msg)
+		WHERE id = $1 AND status = 'running'`, id, MaxAttempts, msg)
 	return err
 }
 

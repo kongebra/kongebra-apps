@@ -17,7 +17,11 @@ import (
 
 const (
 	pollInterval = 2 * time.Second
-	leaseTimeout = 10 * time.Minute
+	// leaseTimeout must exceed config ChunkTimeout (the max time a single LLM
+	// call - and thus the gap between heartbeats during the map phase - can
+	// run) so a legitimately-running job is never rescued out from under its
+	// worker.
+	leaseTimeout = 20 * time.Minute
 	// heartbeatEvery throttles lease refreshes during token streaming.
 	heartbeatEvery = 30 * time.Second
 )
