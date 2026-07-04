@@ -14,7 +14,7 @@ Exit-kriterium: tom-men-ekte skjelett - pkg-lib bygger, én dummy-tjeneste går 
 | 0.1 | Mappestruktur + pkg-lib | `apps/tronderleikan/`-tre, `go.work`, `pkg/` med event-envelope, outbox-writer/publisher, JWT-validering (JWKS fra env-issuer), tenant-context (inkl. `SET LOCAL app.tenant_id`), otel-oppsett. Enhetstester | §5, §8, §9, §11 | - | DONE (PR #7) |
 | 0.2 | CI-workflows | `tronderleikan-<service>.yml` + `-pr.yml`-mal (path-filter inkl. `pkg/**`), instansiert for platform. Gjenbruker `_build-deploy.yml` | §11 | 0.1 | DONE (PR #8) |
 | 0.3 | Aspire AppHost + compose-fallback | TS AppHost: Postgres (DB per tjeneste), Redis, NATS JetStream, Zitadel, otel-lgtm, tjenestene. Per-tjeneste compose-fil. | §12 | 0.1 | DONE (PR #9) - full `aspire run` runtime-boot gjenstår til 1.1 |
-| 0.4 | Zitadel-seed | Idempotent seed-script (API): plattform-org, project `tronderleikan`, 4 roller, test-tenant-org m/grant, testbrukere. Kjøres lokalt (Aspire) og mot cluster | §5, §6, §12 | 0.3 | TODO |
+| 0.4 | Zitadel-seed | Idempotent seed-script (API): plattform-org, project `tronderleikan`, 4 roller, test-tenant-org m/grant, testbrukere. Kjøres lokalt (Aspire) og mot cluster | §5, §6, §12 | 0.3 | DONE (PR #12) - verifisert mot ekte Zitadel v4.15.3, grant-rolle-konvergens bevist |
 | 0.5 | Infra-handoff (kongebra-gitops) | Namespace-par, NATS JetStream (3 replica), Zitadel helm + CNPG-db + `auth.newb.no`, CNPG-databaser + brukere per tjeneste, Traefik-ruter for `leikan.newb.no` | §5, §8, §9, §10 | - | PR åpen (gitops #10) - venter out-of-band secrets + DNS før merge/sync |
 
 ## Fase 1 - kjernen
