@@ -34,7 +34,7 @@ Kontraktene (API + events) står i `SPEC.md` - test mot din egen boks, ikke hele
 
 ## Aspire-spike: funn (CLAUDE.md ber om denne)
 
-Aspire v13 er `aspire` CLI 13.4.5, AppHost i TypeScript.
+Aspire v13 (SDK 13.4.6 i `apphost/aspire.config.json`), AppHost i TypeScript.
 
 - **Fungerer:** `aspire:lint` (eslint) og `aspire:build` (tsc typecheck) rent på `apphost.mts`. Postgres/Redis/NATS/container-primitiver (`addPostgres`/`addRedis`/`addNats().withJetStream()`/`addContainer`) og `addGoApp` finnes i TS-API-et.
 - **Ikke runtime-verifisert ennå:** full `aspire run` (container-boot av Zitadel/otel-lgtm + Go-tjeneste) er ikke kjørt til ende - platform-tjenesten (pakke 1.1) må finnes først for at Go-integrasjonen skal testes reelt. Verifiser ved første tjeneste.
