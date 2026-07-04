@@ -94,6 +94,30 @@ func TestRequeueStale(t *testing.T) {
 	}
 }
 
+func TestRequeueStaleTerminalSetsFinishedAt(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+	_, _ = Enqueue(ctx, pool, "yt-summary", []byte(`{}`))
+	job, _ := Claim(ctx, pool)
+	// simulate a dead worker that already exhausted attempts, with a stale lease
+	if _, err := pool.Exec(ctx,
+		`UPDATE jobs SET attempts = $2, lease_at = now() - interval '1 hour' WHERE id = $1`,
+		job.ID, MaxAttempts); err != nil {
+		t.Fatal(err)
+	}
+	n, err := RequeueStale(ctx, pool, 10*time.Minute)
+	if err != nil || n != 1 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	got, _ := Get(ctx, pool, job.ID)
+	if got.Status != "failed" {
+		t.Fatalf("status = %s, want failed", got.Status)
+	}
+	if got.FinishedAt == nil {
+		t.Fatal("finished_at must be set on terminal stale-lease failure")
+	}
+}
+
 func TestRetryResetsFailedJob(t *testing.T) {
 	ctx := context.Background()
 	pool := testPool(t)

@@ -102,9 +102,10 @@ func RequeueStale(ctx context.Context, pool *pgxpool.Pool, leaseTimeout time.Dur
 		UPDATE jobs SET
 			status = CASE WHEN attempts >= $1 THEN 'failed' ELSE 'queued' END,
 			error = CASE WHEN attempts >= $1 THEN 'lease expired (worker died)' ELSE error END,
+			finished_at = CASE WHEN attempts >= $1 THEN now() ELSE finished_at END,
 			lease_at = NULL
-		WHERE status = 'running' AND lease_at < now() - $2::interval`,
-		MaxAttempts, leaseTimeout.String())
+		WHERE status = 'running' AND lease_at < now() - make_interval(secs => $2)`,
+		MaxAttempts, leaseTimeout.Seconds())
 	if err != nil {
 		return 0, err
 	}
