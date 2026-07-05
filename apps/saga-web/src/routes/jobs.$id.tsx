@@ -1,4 +1,4 @@
-import { createFileRoute, useRouter } from "@tanstack/react-router"
+import { createFileRoute } from "@tanstack/react-router"
 import { createServerFn } from "@tanstack/react-start"
 import { useEffect, useRef, useState } from "react"
 import type { Job, ProgressEvent } from "../types"
@@ -31,19 +31,25 @@ function isTerminal(s: Job["status"]): boolean {
 function JobPage() {
   const initial = Route.useLoaderData()
   const { id } = Route.useParams()
-  const router = useRouter()
 
   const [job, setJob] = useState<Job | null>(initial)
   const [live, setLive] = useState<string>("") // rolling progress line
   const [tokens, setTokens] = useState<string>("") // streamed reduce tokens
   const tokensRef = useRef("")
+  // Bumping streamKey (re)opens the SSE stream: on mount, and again after a
+  // Retry moves a terminal job back to running.
+  const [streamKey, setStreamKey] = useState(0)
+  const jobRef = useRef(job)
+  jobRef.current = job
 
-  // Open an SSE stream once per job page, only if not already terminal at mount.
-  // Depending on `job` here would reconnect on every snapshot (the first SSE
-  // message is a full Job) -> infinite loop; so guard on the loader's `initial`
-  // and key the effect on [id] alone.
   useEffect(() => {
-    if (!initial || isTerminal(initial.status)) return
+    // Guard on the CURRENT job via a ref (not `job` in deps): depending on
+    // `job` would reconnect on every snapshot (the first SSE message is a full
+    // Job) -> infinite loop. streamKey is the explicit reopen trigger.
+    const cur = jobRef.current
+    if (!cur || isTerminal(cur.status)) return
+    tokensRef.current = ""
+    setTokens("")
     const es = new EventSource(`/api/events?job=${id}`)
     let snapshotSeen = false
     es.onmessage = (e) => {
@@ -63,13 +69,27 @@ function JobPage() {
       }
       if (ev.stage === "done" || ev.stage === "failed") {
         es.close()
-        // pull the final job (result_markdown / error) directly from the API
-        getJobClient(Number(id)).then((j) => j && setJob(j))
+        // pull the final job (result_markdown / error); if it came back
+        // non-terminal (a requeue), reopen the stream for the next attempt.
+        getJobClient(Number(id)).then((j) => {
+          if (!j) return
+          setJob(j)
+          if (!isTerminal(j.status)) setStreamKey((k) => k + 1)
+        })
       }
     }
     es.onerror = () => es.close()
     return () => es.close()
-  }, [id])
+  }, [id, streamKey])
+
+  // After a successful retry: reflect running immediately + reopen the stream.
+  async function onRetried() {
+    const j = await getJobClient(Number(id))
+    if (!j) return
+    setLive("")
+    setJob(j)
+    setStreamKey((k) => k + 1)
+  }
 
   if (!job) {
     return (
@@ -108,7 +128,7 @@ function JobPage() {
       {job.status === "failed" && (
         <div style={{ marginBottom: 16 }}>
           <p style={{ color: "#b00" }}>{job.error ?? "failed"}</p>
-          <RetryButton id={job.id} onRetried={() => router.invalidate()} />
+          <RetryButton id={job.id} onRetried={onRetried} />
         </div>
       )}
 
@@ -125,7 +145,7 @@ async function getJobClient(id: number): Promise<Job | null> {
   return (await res.json()) as Job
 }
 
-function RetryButton({ id, onRetried }: { id: number; onRetried: () => void }) {
+function RetryButton({ id, onRetried }: { id: number; onRetried: () => Promise<void> }) {
   const [busy, setBusy] = useState(false)
   return (
     <button
@@ -133,8 +153,8 @@ function RetryButton({ id, onRetried }: { id: number; onRetried: () => void }) {
       onClick={async () => {
         setBusy(true)
         const res = await fetch(`/api/jobs/${id}/retry`, { method: "POST" })
+        if (res.ok) await onRetried()
         setBusy(false)
-        if (res.ok) onRetried()
       }}
       style={{ padding: "8px 20px", fontWeight: 600 }}
     >
