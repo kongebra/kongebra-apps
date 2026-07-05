@@ -15,7 +15,7 @@ Exit-kriterium: tom-men-ekte skjelett - pkg-lib bygger, én dummy-tjeneste går 
 | 0.2 | CI-workflows | `tronderleikan-<service>.yml` + `-pr.yml`-mal (path-filter inkl. `pkg/**`), instansiert for platform. Gjenbruker `_build-deploy.yml` | §11 | 0.1 | DONE (PR #8) |
 | 0.3 | Aspire AppHost + compose-fallback | TS AppHost: Postgres (DB per tjeneste), Redis, NATS JetStream, Zitadel, otel-lgtm, tjenestene. Per-tjeneste compose-fil. | §12 | 0.1 | DONE (PR #9) - full `aspire run` runtime-boot gjenstår til 1.1 |
 | 0.4 | Zitadel-seed | Idempotent seed-script (API): plattform-org, project `tronderleikan`, 4 roller, test-tenant-org m/grant, testbrukere. Kjøres lokalt (Aspire) og mot cluster | §5, §6, §12 | 0.3 | DONE (PR #12) - verifisert mot ekte Zitadel v4.15.3, grant-rolle-konvergens bevist |
-| 0.5 | Infra-handoff (kongebra-gitops) | Namespace-par, NATS JetStream (3 replica), Zitadel helm + CNPG-db + `auth.newb.no`, CNPG-databaser + brukere per tjeneste, Traefik-ruter for `leikan.newb.no` | §5, §8, §9, §10 | - | PR åpen (gitops #10) - venter out-of-band secrets + DNS før merge/sync |
+| 0.5 | Infra-handoff (kongebra-gitops) | Namespace-par, NATS JetStream (3 replica), Zitadel helm + CNPG-db + `auth.newb.no`, CNPG-databaser + brukere per tjeneste, Traefik-ruter for `leikan.newb.no` | §5, §8, §9, §10 | - | DONE (gitops #10 merget, ArgoCD syncer) |
 
 ## Fase 1 - kjernen
 
@@ -25,7 +25,7 @@ Exit-kriterium: ekte quiz kjørt ende-til-ende på `leikan.newb.no` - tenant pro
 |---|---|---|---|---|---|
 | 1.1 | platform-tjenesten | Tenant-registry (CRUD, `public_visibility`), Zitadel-provisjonering (org + grant + første admin), slug-oppslag, `tenant.provisioned`-event | §5, §7, §8, §9 | 0.x | DONE (PR #21) - E2E mot ekte Zitadel bevist |
 | 1.2 | roster-tjenesten | Person CRUD, manuell account-kobling, person-events | §4, §7, §8 | 0.x | DONE (PR #20) - RLS tenant-isolasjon bevist m/non-superuser |
-| 1.3 | competition-tjenesten | Tournament/Game CRUD (kategori, `requires_approval`), Participant (person/team), lag, plasseringsresultater m/ties, outbox-events fra dag 1 | §2, §3, §7, §9 | 1.1, 1.2 | TODO |
+| 1.3 | competition-tjenesten | Tournament/Game CRUD (kategori, `requires_approval`), Participant (person/team), lag, plasseringsresultater m/ties, outbox-events fra dag 1 | §2, §3, §7, §9 | 1.1, 1.2 | DONE (PR #23) - RLS + ties + ref-validering bevist |
 | 1.4 | web (minimal) | TanStack Start: OIDC PKCE, tenant-slug-routes, offentlig scoreboard/game-liste (anonym), arrangør-flater for roster + game + plassering-punching | §6, §10 | 1.1-1.3 | TODO |
 | 1.5 | admin (minimal) | TanStack Start `basePath: /admin`: tenant-liste, provisjonering, kun `platform_admin` | §6, §10 | 1.1 | TODO |
 | 1.6 | E2E-verifisering fase 1 | Quiz-scenarioet kjørt i dev + prod, dokumentert. Playwright-røyk på web | §3 | 1.1-1.5 | TODO |
