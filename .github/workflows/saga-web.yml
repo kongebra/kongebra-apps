@@ -1,12 +1,13 @@
 name: saga-web
 
+# Saga is prod-only (no dev/prod split): build one immutable image per main commit
+# and promote it straight to prod behind the production Environment gate.
 on:
   push:
     branches: [main]
     paths:
       - "apps/saga-web/**"
       - ".github/workflows/saga-web.yml"
-      - ".github/workflows/_build-deploy.yml"
       - ".github/actions/gitops-promote/**"
       - ".github/actions/docker-build/**"
   workflow_dispatch:
@@ -20,11 +21,53 @@ permissions:
   packages: write
 
 jobs:
-  deploy:
-    uses: ./.github/workflows/_build-deploy.yml
-    with:
-      app: saga-web
-      app_dir: apps/saga-web
-      image: ghcr.io/kongebra/saga-web
-      image_tag: ${{ github.event.inputs.image_tag || '' }}
-    secrets: inherit
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Resolve image tag
+        id: tag
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          if [ -n "$IMAGE_TAG" ]; then
+            echo "tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=$(date -u +%Y-%m-%d)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.tag.outputs.build == 'true'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - name: Build and push image
+        if: steps.tag.outputs.build == 'true'
+        uses: ./.github/actions/docker-build
+        with:
+          app_dir: apps/saga-web
+          image: ghcr.io/kongebra/saga-web
+          tag: ${{ steps.tag.outputs.tag }}
+          push: true
+
+  deploy-prod:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: gitops-saga-web-prod
+      cancel-in-progress: false
+    steps:
+      - name: Checkout caller repo (for composite action)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - name: Promote to prod
+        uses: ./.github/actions/gitops-promote
+        with:
+          app: saga-web
+          image: ghcr.io/kongebra/saga-web
+          tag: ${{ needs.build.outputs.tag }}
+          env: prod
+          deploy_key: ${{ secrets.GITOPS_DEPLOY_KEY }}

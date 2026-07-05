@@ -93,8 +93,19 @@ func pickSubtitle(dir, id string) (string, error) {
 	return "", errors.New("no captions available for this video")
 }
 
+// resilience flags make yt-dlp ride out YouTube's rate limiting itself: retry
+// transient HTTP errors (incl. 429) with exponential backoff, and pace subtitle
+// (timedtext) downloads which YouTube throttles aggressively. Prepended to every
+// invocation - harmless on the metadata (-J) call.
+var resilienceArgs = []string{
+	"--retries", "5",
+	"--retry-sleep", "http=exp=3:60",
+	"--extractor-retries", "3",
+	"--sleep-subtitles", "2",
+}
+
 func (e Exec) run(ctx context.Context, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, e.Bin, args...)
+	cmd := exec.CommandContext(ctx, e.Bin, append(append([]string{}, resilienceArgs...), args...)...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
