@@ -1,0 +1,138 @@
+@import 'tailwindcss' source('../');
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+  TrønderLeikan tema. Neutral base (shadcn new-york) med en distinkt fjord-teal
+  primær og egne podium-farger (gull/sølv/bronse) for scoreboards. oklch-tokens.
+*/
+:root {
+  --radius: 0.625rem;
+
+  --background: oklch(0.99 0.004 106);
+  --foreground: oklch(0.22 0.01 258);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.22 0.01 258);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.22 0.01 258);
+
+  --primary: oklch(0.52 0.09 197);
+  --primary-foreground: oklch(0.99 0.005 197);
+  --secondary: oklch(0.96 0.006 250);
+  --secondary-foreground: oklch(0.28 0.02 258);
+  --muted: oklch(0.96 0.006 250);
+  --muted-foreground: oklch(0.53 0.015 257);
+  --accent: oklch(0.95 0.02 197);
+  --accent-foreground: oklch(0.3 0.05 210);
+  --destructive: oklch(0.58 0.22 27);
+  --destructive-foreground: oklch(0.99 0 0);
+
+  --border: oklch(0.92 0.005 258);
+  --input: oklch(0.92 0.005 258);
+  --ring: oklch(0.52 0.09 197);
+
+  --gold: oklch(0.82 0.15 85);
+  --silver: oklch(0.8 0.01 258);
+  --bronze: oklch(0.68 0.11 55);
+
+  --sidebar: oklch(0.985 0.002 258);
+  --sidebar-foreground: oklch(0.22 0.01 258);
+  --sidebar-primary: oklch(0.52 0.09 197);
+  --sidebar-primary-foreground: oklch(0.99 0.005 197);
+  --sidebar-accent: oklch(0.96 0.006 250);
+  --sidebar-accent-foreground: oklch(0.28 0.02 258);
+  --sidebar-border: oklch(0.92 0.005 258);
+  --sidebar-ring: oklch(0.52 0.09 197);
+}
+
+.dark {
+  --background: oklch(0.19 0.012 258);
+  --foreground: oklch(0.96 0.004 106);
+  --card: oklch(0.23 0.014 258);
+  --card-foreground: oklch(0.96 0.004 106);
+  --popover: oklch(0.23 0.014 258);
+  --popover-foreground: oklch(0.96 0.004 106);
+
+  --primary: oklch(0.7 0.11 195);
+  --primary-foreground: oklch(0.19 0.02 210);
+  --secondary: oklch(0.28 0.014 258);
+  --secondary-foreground: oklch(0.96 0.004 106);
+  --muted: oklch(0.28 0.014 258);
+  --muted-foreground: oklch(0.7 0.015 257);
+  --accent: oklch(0.32 0.03 200);
+  --accent-foreground: oklch(0.9 0.03 197);
+  --destructive: oklch(0.66 0.2 25);
+  --destructive-foreground: oklch(0.98 0 0);
+
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.7 0.11 195);
+
+  --gold: oklch(0.84 0.15 85);
+  --silver: oklch(0.82 0.01 258);
+  --bronze: oklch(0.72 0.11 55);
+
+  --sidebar: oklch(0.23 0.014 258);
+  --sidebar-foreground: oklch(0.96 0.004 106);
+  --sidebar-primary: oklch(0.7 0.11 195);
+  --sidebar-primary-foreground: oklch(0.19 0.02 210);
+  --sidebar-accent: oklch(0.28 0.014 258);
+  --sidebar-accent-foreground: oklch(0.96 0.004 106);
+  --sidebar-border: oklch(1 0 0 / 12%);
+  --sidebar-ring: oklch(0.7 0.11 195);
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-gold: var(--gold);
+  --color-silver: var(--silver);
+  --color-bronze: var(--bronze);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+    outline-color: color-mix(in oklch, var(--ring) 50%, transparent);
+  }
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-feature-settings: 'rlig' 1, 'calt' 1, 'ss01' 1;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+}
