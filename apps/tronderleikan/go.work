@@ -6,5 +6,6 @@ use (
 	./pkg
 	./platform
 	./roster
+	./competition
 	./zitadel-seed
 )

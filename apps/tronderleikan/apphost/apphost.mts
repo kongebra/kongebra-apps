@@ -29,7 +29,6 @@ const platformDb = postgres.addDatabase('platform');
 const rosterDb = postgres.addDatabase('roster');
 const competitionDb = postgres.addDatabase('competition');
 // bracket/timing/rating (fase 2-3) legges til her når tjenestene finnes.
-void competitionDb;
 
 // ---------------------------------------------------------------------------
 // Redis: én instans, kun cache/ephemeral (SPEC §8).
@@ -157,8 +156,9 @@ if (existsSync(path.join(serviceDir('platform'), 'go.mod'))) {
 // kjøretid (ikke statisk kjent). Oppgraderingssti: la zitadel-seed skrive ut
 // project-ID-en (eller registrer en API-app) og mat den inn her - egen
 // auth-integrasjonspakke sammen med platform 1.1.
+let rosterEndpoint: ReturnType<ReturnType<typeof builder.addGoApp>['getEndpoint']> | undefined;
 if (existsSync(path.join(serviceDir('roster'), 'go.mod'))) {
-  await builder
+  const rosterApp = builder
     .addGoApp('roster', serviceDir('roster'))
     .withHttpEndpoint({ env: 'PORT' })
     .withEnvironment('DATABASE_URL', await rosterDb.uriExpression())
@@ -170,8 +170,30 @@ if (existsSync(path.join(serviceDir('roster'), 'go.mod'))) {
     .waitFor(postgres)
     .waitFor(nats)
     .waitFor(zitadel);
+  rosterEndpoint = rosterApp.getEndpoint('http');
+  await rosterApp;
 }
-// competition (fase 1) og bracket/timing/live/rating (fase 2-3) følger samme
-// mønster: addGoApp + DATABASE_URL/NATS_URL/AUTH_ISSUER/OTLP.
+// competition (arbeidspakke 1.3, SPEC §2/§3/§7): Tournaments/Games/påmelding/
+// lag/plasseringsresultater + outbox-events fra dag 1. Egen DB (competitionDb).
+// Validerer person-refs synkront mot roster ved skriving (SPEC §7), derfor
+// ROSTER_URL + waitFor(roster). AUTH_AUDIENCE-placeholderen deler samme
+// oppgraderingssti som roster (ekte project-ID fra seeden - egen auth-pakke).
+if (rosterEndpoint && existsSync(path.join(serviceDir('competition'), 'go.mod'))) {
+  await builder
+    .addGoApp('competition', serviceDir('competition'))
+    .withHttpEndpoint({ env: 'PORT' })
+    .withEnvironment('DATABASE_URL', await competitionDb.uriExpression())
+    .withEnvironment('NATS_URL', await nats.uriExpression())
+    .withEnvironment('AUTH_ISSUER', zitadel.getEndpoint('http'))
+    .withEnvironment('AUTH_AUDIENCE', 'tronderleikan')
+    .withEnvironment('ROSTER_URL', rosterEndpoint)
+    .withEnvironment('OTEL_EXPORTER_OTLP_ENDPOINT', otlpEndpoint)
+    .withEnvironment('OTEL_SERVICE_NAME', 'competition')
+    .waitFor(postgres)
+    .waitFor(nats)
+    .waitFor(zitadel);
+}
+// bracket/timing/live/rating (fase 2-3) følger samme mønster:
+// addGoApp + DATABASE_URL/NATS_URL/AUTH_ISSUER/OTLP.
 
 await builder.build().run();
