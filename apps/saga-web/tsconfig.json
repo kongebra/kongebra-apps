@@ -9,7 +9,8 @@
     "strict": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "baseUrl": ".",
-    "paths": { "@/*": ["./src/*"] }
+    "paths": { "@/*": ["./src/*"] },
+    "allowImportingTsExtensions": true
   },
   "include": ["src", "vite.config.ts"]
 }
