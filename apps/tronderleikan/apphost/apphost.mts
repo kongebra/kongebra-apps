@@ -126,7 +126,6 @@ const zitadelSeed = builder
   .withEnvironment('ZITADEL_PAT_FILE', zitadelPatFile)
   .withEnvironment('SEED_TEST_PASSWORD', seedTestPassword)
   .waitFor(zitadel);
-void zitadelSeed;
 
 // ---------------------------------------------------------------------------
 // Go-tjenestene. Kun platform er planlagt i fase 1 (pakke 1.1); mappen finnes
@@ -140,11 +139,17 @@ if (existsSync(path.join(serviceDir('platform'), 'go.mod'))) {
     .withEnvironment('DATABASE_URL', await platformDb.uriExpression())
     .withEnvironment('NATS_URL', await nats.uriExpression())
     .withEnvironment('AUTH_ISSUER', zitadel.getEndpoint('http'))
+    // Zitadel-provisjonering: samme instans + PAT-fil som seeden. Platform
+    // utleder plattform-org/project (og JWT-audience) fra den seedede tilstanden,
+    // derfor waitFor(zitadelSeed) - project/roller må finnes ved oppstart.
+    .withEnvironment('ZITADEL_API_URL', zitadel.getEndpoint('http'))
+    .withEnvironment('ZITADEL_PAT_FILE', zitadelPatFile)
     .withEnvironment('OTEL_EXPORTER_OTLP_ENDPOINT', otlpEndpoint)
     .withEnvironment('OTEL_SERVICE_NAME', 'platform')
     .waitFor(postgres)
     .waitFor(nats)
-    .waitFor(zitadel);
+    .waitFor(zitadel)
+    .waitFor(zitadelSeed);
 }
 // roster/competition (fase 1) og bracket/timing/live/rating (fase 2-3)
 // følger samme mønster: addGoApp + DATABASE_URL/NATS_URL/AUTH_ISSUER/OTLP.

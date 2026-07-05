@@ -1,6 +1,9 @@
-// ponytail: dummy platform-tjeneste kun for å gi CI-løypa (arbeidspakke 0.2)
-// noe å bygge. Erstattes av ekte tenant-registry i arbeidspakke 1.1 (SPEC §7);
-// behold main-skjelettet (healthz, -health-flagg, graceful shutdown, otelsetup).
+// Command platform er TrønderLeikans platform-tjeneste (SPEC §7, arbeidspakke
+// 1.1): tenant-registry, Zitadel-provisjonering og admin-plane-API.
+//
+// Oppstart: kjør migrasjoner -> koble Postgres/NATS/Zitadel -> utled JWT-audience
+// fra Zitadel-prosjektet -> start outbox-publisher + HTTP-server. Konfig leses
+// fra env (issuer/Zitadel-domenet ALDRI hardkodet, SPEC §5).
 package main
 
 import (
@@ -15,11 +18,25 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
+
+	"github.com/kongebra/kongebra-apps/apps/tronderleikan/pkg/authn"
 	"github.com/kongebra/kongebra-apps/apps/tronderleikan/pkg/otelsetup"
+	"github.com/kongebra/kongebra-apps/apps/tronderleikan/pkg/outbox"
 )
 
 // version settes ved build via -ldflags "-X main.version=<tag>", env VERSION overstyrer.
 var version = "dev"
+
+// streamName + streamSubjects: JetStream-strømmen platform publiserer sine
+// domene-events til (SPEC §9). Ensures idempotent ved oppstart så lokal kjøring
+// og fersk cluster ikke krever manuell stream-oppsett.
+const (
+	streamName     = "tl-platform"
+	streamSubjects = "tl.platform.>"
+)
 
 // healthCheck gjør en GET mot den lokale serverens /healthz og returnerer exit-kode.
 // Brukes som k8s exec-probe ("/app", "-health") siden distroless ikke har shell/curl.
@@ -42,13 +59,23 @@ func main() {
 	health := flag.Bool("health", false, "probe local /healthz and exit (distroless healthcheck)")
 	flag.Parse()
 
-	port := os.Getenv("PORT")
+	port := os.Getenv(EnvPort)
 	if port == "" {
-		port = "8080"
+		port = defaultPort
 	}
-
 	if *health {
 		os.Exit(healthCheck(port))
+	}
+
+	if err := run(); err != nil {
+		log.Fatalf("platform: %v", err)
+	}
+}
+
+func run() error {
+	cfg, err := LoadConfig(os.Getenv)
+	if err != nil {
+		return fmt.Errorf("config: %w", err)
 	}
 
 	v := version
@@ -62,23 +89,79 @@ func main() {
 	// OTel kun når endpoint er satt, så lokal kjøring uten collector er stille.
 	shutdownOTel := func(context.Context) error { return nil }
 	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" {
-		var err error
 		shutdownOTel, err = otelsetup.Setup(ctx, "tronderleikan-platform")
 		if err != nil {
-			log.Fatalf("otel setup: %v", err)
+			return fmt.Errorf("otel setup: %w", err)
 		}
 	}
+	defer func() {
+		shCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = shutdownOTel(shCtx)
+	}()
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok"}` + "\n"))
-	})
+	// Migrasjoner før noe annet rører databasen (SPEC §8).
+	if err := runMigrations(ctx, cfg.DatabaseURL); err != nil {
+		return err
+	}
 
-	srv := &http.Server{Addr: ":" + port, Handler: mux}
+	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("connect postgres: %w", err)
+	}
+	defer pool.Close()
 
+	// NATS JetStream + idempotent stream-ensure for platform-subjektene.
+	nc, err := nats.Connect(cfg.NatsURL)
+	if err != nil {
+		return fmt.Errorf("connect nats: %w", err)
+	}
+	defer nc.Drain() //nolint:errcheck // best-effort ved shutdown
+	js, err := jetstream.New(nc)
+	if err != nil {
+		return fmt.Errorf("jetstream: %w", err)
+	}
+	if _, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
+		Name:     streamName,
+		Subjects: []string{streamSubjects},
+	}); err != nil {
+		return fmt.Errorf("ensure jetstream stream %q: %w", streamName, err)
+	}
+
+	// Zitadel-klient for provisjonering (retry: instansen kan være under oppstart).
+	dir, err := connectZitadelWithRetry(ctx, cfg, 12, 5*time.Second)
+	if err != nil {
+		return fmt.Errorf("connect zitadel: %w", err)
+	}
+	defer func() { _ = dir.Close() }()
+	prov := NewProvisioner(dir, cfg.PlatformOrgName, cfg.ProjectName, log.Printf)
+
+	// JWT-audience utledes fra Zitadel-prosjektet (ingen hardkodet/driftende
+	// project-id). Krever at zitadel-seed er kjørt (project finnes).
+	audience, err := prov.ProjectAudience(ctx)
+	if err != nil {
+		return fmt.Errorf("utled jwt-audience: %w", err)
+	}
+	validator, err := authn.NewValidator(ctx, audience)
+	if err != nil {
+		return fmt.Errorf("authn validator: %w", err)
+	}
+
+	repo := NewRepo(pool)
+	svc := NewService(pool, repo, prov, log.Printf)
+	server := NewServer(svc, repo, validator)
+
+	// Outbox-publisher: flytter domene-events til NATS (SPEC §9).
+	publisher := outbox.NewPublisher(pool, js)
 	go func() {
-		log.Printf("tronderleikan-platform listening on :%s (version=%s)", port, v)
+		if err := publisher.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Printf("outbox publisher stopped: %v", err)
+		}
+	}()
+
+	srv := &http.Server{Addr: ":" + cfg.Port, Handler: server.Handler()}
+	go func() {
+		log.Printf("tronderleikan-platform listening on :%s (version=%s, audience=%s)", cfg.Port, v, audience)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("server: %v", err)
 		}
@@ -90,5 +173,28 @@ func main() {
 	shCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shCtx)
-	_ = shutdownOTel(shCtx)
+	return nil
+}
+
+// connectZitadelWithRetry prøver å koble til Zitadel noen ganger (instansen kan
+// være under oppstart). Samme mønster som zitadel-seed.
+func connectZitadelWithRetry(ctx context.Context, cfg Config, attempts int, wait time.Duration) (*zitadelDirectory, error) {
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		dir, err := newZitadelDirectory(ctx, cfg.ZitadelTarget, cfg.ZitadelToken)
+		if err == nil {
+			return dir, nil
+		}
+		lastErr = err
+		log.Printf("zitadel connect attempt %d/%d failed: %v (retry in %s)", i+1, attempts, err, wait)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(wait):
+		}
+	}
+	return nil, lastErr
 }
