@@ -1,0 +1,4 @@
+# Build-context for tjeneste-images er apps/tronderleikan; hold den slank.
+docs/
+go.work
+go.work.sum
