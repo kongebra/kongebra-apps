@@ -32,11 +32,20 @@ export const Route = createFileRoute('/auth/login')({
   },
 })
 
-// Kun interne stier tillates som returnTo (unngå open redirect).
-// Må starte med én '/', men ikke '//' eller '/\' - browsere normaliserer '\' til
-// '/', så '/\evil.com' blir protokoll-relativ (//evil.com) og ville redirecte ut.
+// Kun interne stier tillates som returnTo (unngå open redirect). Vi parser mot et
+// dummy-opphav og krever at det RESOLVER til samme opphav - fanger absolutte URL-er,
+// protokoll-relative (//host), og backslash-triks (/\host) som browseren normaliserer.
+// Vi returnerer den PARSEDE stien (ikke rå input), så det ikke finnes noe
+// parser-differential mellom denne sjekken og browserens tolkning av Location.
 function safeReturnTo(value: string | null): string {
-  if (!value || !value.startsWith('/')) return '/'
-  if (value.startsWith('//') || value.startsWith('/\\')) return '/'
-  return value
+  if (!value) return '/'
+  try {
+    const base = 'http://localhost'
+    const u = new URL(value, base)
+    if (u.origin !== base) return '/'
+    const rel = `${u.pathname}${u.search}${u.hash}`
+    return rel.startsWith('/') ? rel : '/'
+  } catch {
+    return '/'
+  }
 }
