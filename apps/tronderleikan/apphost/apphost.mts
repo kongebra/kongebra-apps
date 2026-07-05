@@ -130,8 +130,10 @@ const zitadelSeed = builder
 // ikke på main ennå, så deklarasjonen er gated på at go.mod eksisterer.
 // Mønsteret under ER kontrakten for hvordan hver tjeneste wires inn.
 // ---------------------------------------------------------------------------
+type GoAppEndpoint = ReturnType<ReturnType<typeof builder.addGoApp>['getEndpoint']>;
+let platformEndpoint: GoAppEndpoint | undefined;
 if (existsSync(path.join(serviceDir('platform'), 'go.mod'))) {
-  await builder
+  const platformApp = builder
     .addGoApp('platform', serviceDir('platform'))
     .withHttpEndpoint({ env: 'PORT' })
     .withEnvironment('DATABASE_URL', await platformDb.uriExpression())
@@ -148,6 +150,8 @@ if (existsSync(path.join(serviceDir('platform'), 'go.mod'))) {
     .waitFor(nats)
     .waitFor(zitadel)
     .waitFor(zitadelSeed);
+  platformEndpoint = platformApp.getEndpoint('http');
+  await platformApp;
 }
 // roster (arbeidspakke 1.2, SPEC §4/§7): Person-roster + account-kobling +
 // person-events. Egen DB (rosterDb). Samme wiring-mønster som platform.
@@ -178,8 +182,9 @@ if (existsSync(path.join(serviceDir('roster'), 'go.mod'))) {
 // Validerer person-refs synkront mot roster ved skriving (SPEC §7), derfor
 // ROSTER_URL + waitFor(roster). AUTH_AUDIENCE-placeholderen deler samme
 // oppgraderingssti som roster (ekte project-ID fra seeden - egen auth-pakke).
+let competitionEndpoint: GoAppEndpoint | undefined;
 if (rosterEndpoint && existsSync(path.join(serviceDir('competition'), 'go.mod'))) {
-  await builder
+  const competitionApp = builder
     .addGoApp('competition', serviceDir('competition'))
     .withHttpEndpoint({ env: 'PORT' })
     .withEnvironment('DATABASE_URL', await competitionDb.uriExpression())
@@ -192,8 +197,51 @@ if (rosterEndpoint && existsSync(path.join(serviceDir('competition'), 'go.mod'))
     .waitFor(postgres)
     .waitFor(nats)
     .waitFor(zitadel);
+  competitionEndpoint = competitionApp.getEndpoint('http');
+  await competitionApp;
 }
 // bracket/timing/live/rating (fase 2-3) følger samme mønster:
 // addGoApp + DATABASE_URL/NATS_URL/AUTH_ISSUER/OTLP.
+
+// ---------------------------------------------------------------------------
+// web (arbeidspakke 1.4, SPEC §6/§10): TanStack Start-frontenden. BFF-en kaller
+// Go-tjenestene på deres interne endepunkter (PLATFORM_URL/ROSTER_URL/
+// COMPETITION_URL), og gjør OIDC (Authorization Code + PKCE) mot Zitadel
+// (AUTH_ISSUER, aldri hardkodet). Kjøres som npm-executable lokalt; PORT
+// injiseres av Aspire (vite leser process.env.PORT).
+// ponytail: node-deps må installeres (npm ci) før `aspire run`, og Aspire har
+// ingen Node-hosting-integrasjon i aspire.config.json ennå - full `aspire run`-
+// runtime for web valideres i 1.6 (samme deferral som platform-runtime i 0.3).
+// Prod kjører uansett via Docker/nitro (.output), ikke via Aspire.
+// AUTH_CLIENT_ID/SESSION_SECRET er dev-parametere; ekte web-OIDC-klient
+// registreres av zitadel-seed (samme oppgraderingssti som AUTH_AUDIENCE over).
+// ---------------------------------------------------------------------------
+const webSessionSecret = builder.addParameter('web-session-secret', {
+  value: 'insecure-local-dev-session-secret-32b', // >= 32 tegn, kun lokalt
+  secret: true,
+});
+if (
+  platformEndpoint &&
+  rosterEndpoint &&
+  competitionEndpoint &&
+  existsSync(path.join(serviceDir('web'), 'package.json'))
+) {
+  const webApp = builder
+    .addExecutable('web', 'npm', serviceDir('web'), ['run', 'dev'])
+    .withHttpEndpoint({ env: 'PORT' })
+    .withEnvironment('PLATFORM_URL', platformEndpoint)
+    .withEnvironment('ROSTER_URL', rosterEndpoint)
+    .withEnvironment('COMPETITION_URL', competitionEndpoint)
+    .withEnvironment('AUTH_ISSUER', zitadel.getEndpoint('http'))
+    .withEnvironment('AUTH_CLIENT_ID', 'tronderleikan-web')
+    .withEnvironment('SESSION_SECRET', webSessionSecret)
+    .withEnvironment('OTEL_EXPORTER_OTLP_ENDPOINT', otlpEndpoint)
+    .withEnvironment('OTEL_SERVICE_NAME', 'web')
+    .waitFor(zitadel)
+    .waitFor(zitadelSeed);
+  await webApp;
+} else {
+  void webSessionSecret;
+}
 
 await builder.build().run();

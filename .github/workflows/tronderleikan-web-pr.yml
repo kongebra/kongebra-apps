@@ -1,0 +1,63 @@
+# PR-sjekk for tronderleikan-web: lint + typecheck + build + Playwright-røyk,
+# og verifiser at Dockerfile bygger.
+# SIKKERHET (alle nye apper MÅ følge dette, se CLAUDE.md):
+#   - on: pull_request (ALDRI pull_request_target)
+#   - permissions: contents: read (ingen skrivetilgang)
+#   - INGEN secrets: inherit, ingen GHCR/gitops-credentials (docker-build push=false)
+# Tester er spraak-spesifikke og bor her i caller, ikke i docker-build-action.
+name: tronderleikan-web PR
+
+on:
+  pull_request:
+    paths:
+      - "apps/tronderleikan/web/**"
+      - ".github/workflows/tronderleikan-web-pr.yml"
+      - ".github/actions/docker-build/**"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/tronderleikan/web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/tronderleikan/web/package-lock.json
+
+      - name: Install deps
+        run: npm ci
+
+      # Build først: TanStack Router-pluginen genererer src/routeTree.gen.ts
+      # (gitignore-t), som typecheck og lint er avhengige av.
+      - name: Build
+        run: npm run build
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Playwright smoke
+        run: npm run test:e2e
+
+      - name: Build image (no push)
+        uses: ./.github/actions/docker-build
+        with:
+          app_dir: apps/tronderleikan/web
+          image: ghcr.io/kongebra/tronderleikan-web
+          tag: pr-${{ github.sha }}
+          push: false
