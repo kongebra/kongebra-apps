@@ -23,8 +23,8 @@ Exit-kriterium: ekte quiz kjørt ende-til-ende på `leikan.newb.no` - tenant pro
 
 | # | Pakke | Innhold | Spec | Avhenger av | Status |
 |---|---|---|---|---|---|
-| 1.1 | platform-tjenesten | Tenant-registry (CRUD, `public_visibility`), Zitadel-provisjonering (org + grant + første admin), slug-oppslag, `tenant.provisioned`-event | §5, §7, §8, §9 | 0.x | TODO |
-| 1.2 | roster-tjenesten | Person CRUD, manuell account-kobling, person-events | §4, §7, §8 | 0.x | PR åpen (feat/tronderleikan-roster) |
+| 1.1 | platform-tjenesten | Tenant-registry (CRUD, `public_visibility`), Zitadel-provisjonering (org + grant + første admin), slug-oppslag, `tenant.provisioned`-event | §5, §7, §8, §9 | 0.x | DONE (PR #21) - E2E mot ekte Zitadel bevist |
+| 1.2 | roster-tjenesten | Person CRUD, manuell account-kobling, person-events | §4, §7, §8 | 0.x | DONE (PR #20) - RLS tenant-isolasjon bevist m/non-superuser |
 | 1.3 | competition-tjenesten | Tournament/Game CRUD (kategori, `requires_approval`), Participant (person/team), lag, plasseringsresultater m/ties, outbox-events fra dag 1 | §2, §3, §7, §9 | 1.1, 1.2 | TODO |
 | 1.4 | web (minimal) | TanStack Start: OIDC PKCE, tenant-slug-routes, offentlig scoreboard/game-liste (anonym), arrangør-flater for roster + game + plassering-punching | §6, §10 | 1.1-1.3 | TODO |
 | 1.5 | admin (minimal) | TanStack Start `basePath: /admin`: tenant-liste, provisjonering, kun `platform_admin` | §6, §10 | 1.1 | TODO |
