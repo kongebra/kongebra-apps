@@ -33,7 +33,10 @@ export const Route = createFileRoute('/auth/login')({
 })
 
 // Kun interne stier tillates som returnTo (unngå open redirect).
+// Må starte med én '/', men ikke '//' eller '/\' - browsere normaliserer '\' til
+// '/', så '/\evil.com' blir protokoll-relativ (//evil.com) og ville redirecte ut.
 function safeReturnTo(value: string | null): string {
-  if (value && value.startsWith('/') && !value.startsWith('//')) return value
-  return '/'
+  if (!value || !value.startsWith('/')) return '/'
+  if (value.startsWith('//') || value.startsWith('/\\')) return '/'
+  return value
 }
