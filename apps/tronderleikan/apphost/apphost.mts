@@ -29,7 +29,6 @@ const platformDb = postgres.addDatabase('platform');
 const rosterDb = postgres.addDatabase('roster');
 const competitionDb = postgres.addDatabase('competition');
 // bracket/timing/rating (fase 2-3) legges til her når tjenestene finnes.
-void rosterDb;
 void competitionDb;
 
 // ---------------------------------------------------------------------------
@@ -151,7 +150,28 @@ if (existsSync(path.join(serviceDir('platform'), 'go.mod'))) {
     .waitFor(zitadel)
     .waitFor(zitadelSeed);
 }
-// roster/competition (fase 1) og bracket/timing/live/rating (fase 2-3)
-// følger samme mønster: addGoApp + DATABASE_URL/NATS_URL/AUTH_ISSUER/OTLP.
+// roster (arbeidspakke 1.2, SPEC §4/§7): Person-roster + account-kobling +
+// person-events. Egen DB (rosterDb). Samme wiring-mønster som platform.
+// ponytail: AUTH_AUDIENCE settes til project-navnet som placeholder. Ekte
+// token-audience er Zitadel-project-/client-ID-en som seeden genererer ved
+// kjøretid (ikke statisk kjent). Oppgraderingssti: la zitadel-seed skrive ut
+// project-ID-en (eller registrer en API-app) og mat den inn her - egen
+// auth-integrasjonspakke sammen med platform 1.1.
+if (existsSync(path.join(serviceDir('roster'), 'go.mod'))) {
+  await builder
+    .addGoApp('roster', serviceDir('roster'))
+    .withHttpEndpoint({ env: 'PORT' })
+    .withEnvironment('DATABASE_URL', await rosterDb.uriExpression())
+    .withEnvironment('NATS_URL', await nats.uriExpression())
+    .withEnvironment('AUTH_ISSUER', zitadel.getEndpoint('http'))
+    .withEnvironment('AUTH_AUDIENCE', 'tronderleikan')
+    .withEnvironment('OTEL_EXPORTER_OTLP_ENDPOINT', otlpEndpoint)
+    .withEnvironment('OTEL_SERVICE_NAME', 'roster')
+    .waitFor(postgres)
+    .waitFor(nats)
+    .waitFor(zitadel);
+}
+// competition (fase 1) og bracket/timing/live/rating (fase 2-3) følger samme
+// mønster: addGoApp + DATABASE_URL/NATS_URL/AUTH_ISSUER/OTLP.
 
 await builder.build().run();

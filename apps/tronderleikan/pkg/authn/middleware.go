@@ -40,3 +40,23 @@ func (v *Validator) Middleware(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), p)))
 	})
 }
+
+// RequireRole gir en middleware som krever at principalen (satt av en
+// forutgående auth-middleware) har rollen (SPEC §6). Mangler principal -> 401,
+// mangler rollen -> 403. Komponeres etter token-validering.
+func RequireRole(role string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			p, ok := PrincipalFrom(r.Context())
+			if !ok {
+				http.Error(w, "authentication required", http.StatusUnauthorized)
+				return
+			}
+			if !p.HasRole(role) {
+				http.Error(w, "requires role "+role, http.StatusForbidden)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
