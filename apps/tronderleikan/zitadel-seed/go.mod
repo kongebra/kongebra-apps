@@ -32,7 +32,7 @@ require (
 
 require (
 	github.com/kongebra/kongebra-apps/apps/tronderleikan/pkg v0.0.0
-	google.golang.org/grpc v1.81.1
+	google.golang.org/grpc v1.82.0
 )
 
 // pkg lever i samme monorepo (Directory-uavhengig kilde til rolle-nøklene):

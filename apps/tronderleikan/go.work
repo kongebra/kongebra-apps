@@ -9,3 +9,13 @@ use (
 	./competition
 	./zitadel-seed
 )
+
+// Workspace-only pin: unn go go.work sin merge av modulgrafene drar den gamle
+// monolittiske google.golang.org/genproto (2020) inn uprunet via
+// grpc -> spiffe -> grpc/examples. Den gamle pakken inneholder googleapis/rpc +
+// googleapis/api som nå ligger i egne moduler -> "ambiguous import" ved go.work-bygg.
+// Isolerte modul-bygg (Docker/CI, GOWORK=off) pruner den bort og er upåvirket, så
+// per-modul go get + go mod tidy klarer ikke pinne den (tidy fjerner den ubrukte kravet).
+// En nyere monolittisk genproto har fjernet de splittede pakkene -> tvetydigheten borte.
+// ponytail: workspace-lokal replace; fjern når grpc/spiffe ikke lenger drar inn grpc/examples.
+replace google.golang.org/genproto => google.golang.org/genproto v0.0.0-20260630182238-925bb5da69e7
