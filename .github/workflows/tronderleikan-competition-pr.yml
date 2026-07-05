@@ -20,6 +20,15 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # GOWORK=off: test hver modul isolert mot sin egen go.mod/go.sum - nøyaktig
+    # slik Docker-bygget gjør det (build-context har ingen go.work). go.work er
+    # kun for lokal utvikling; i suite-workspacet krever platform (zitadel-go)
+    # grpc v1.82.0 mens roster/pkg/competition holder v1.81.1, og unionen trekker
+    # inn både splittet og monolittisk genproto -> "ambiguous import" i
+    # workspace-modus. Isolert bygg (som deployet image) er uansett den ekte
+    # kontrakten vi vil verifisere.
+    env:
+      GOWORK: "off"
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
