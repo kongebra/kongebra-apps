@@ -26,9 +26,17 @@ cd apps/tronderleikan/platform
 docker compose up -d          # postgres + nats for denne tjenesten
 export DATABASE_URL=postgres://platform:platform@localhost:5432/platform?sslmode=disable
 export NATS_URL=nats://localhost:4222
-export AUTH_ISSUER=http://localhost:8300      # peker på Aspire-Zitadel hvis den kjører, ellers mock
+export AUTH_ISSUER=http://localhost:8300       # Zitadel-issuer (JWT-validering)
+export ZITADEL_API_URL=http://localhost:8300   # Zitadel-provisjonering (samme instans)
+export ZITADEL_PAT_FILE=/sti/til/pat.txt       # IAM_OWNER-PAT (Aspire skriver den til apphost/.zitadel/pat.txt)
 go run .
 ```
+
+platform er Zitadel-avhengig (provisjonering + JWT-audience utledes fra det seedede prosjektet), så den trenger en **kjørende, seedet Zitadel** for å starte - ikke bare postgres+nats.
+Enkleste vei: kjør `aspire run` (starter Zitadel + seed), og pek `go run .` på `http://localhost:8300`.
+Alternativt: start en egen Zitadel + kjør `zitadel-seed` mot den først (se `platform/compose.yaml`-kommentaren).
+
+Enhets-testene (`go test ./...`) trenger ingen av dette (rene fakes). Den ende-til-ende-testen ligger bak build-taggen `e2e` og kjøres kun mot ekte infra.
 
 Kontraktene (API + events) står i `SPEC.md` - test mot din egen boks, ikke hele produktet.
 
