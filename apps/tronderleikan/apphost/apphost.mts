@@ -244,4 +244,38 @@ if (
   void webSessionSecret;
 }
 
+// ---------------------------------------------------------------------------
+// admin (arbeidspakke 1.5, SPEC §6/§10): admin-planet, TanStack Start med
+// basePath /admin. Snakker KUN med platform (tenant-registry + provisjonering)
+// og gates 100% på platform_admin. EGEN Zitadel-app (egen AUTH_CLIENT_ID),
+// separat fra web. Egen SESSION_SECRET og eget cookie-navn (delt origin i prod).
+// Samme node-hosting-deferral som web: full `aspire run`-runtime valideres i 1.6;
+// prod kjører via Docker/nitro (.output). AUTH_CLIENT_ID er en dev-plassholder -
+// ekte admin-OIDC-klient registreres av zitadel-seed (samme oppgraderingssti som
+// web sin AUTH_CLIENT_ID/AUTH_AUDIENCE).
+// ---------------------------------------------------------------------------
+const adminSessionSecret = builder.addParameter('admin-session-secret', {
+  value: 'insecure-local-dev-admin-session-32b', // >= 32 tegn, kun lokalt
+  secret: true,
+});
+if (
+  platformEndpoint &&
+  existsSync(path.join(serviceDir('admin'), 'package.json'))
+) {
+  const adminApp = builder
+    .addExecutable('admin', 'npm', serviceDir('admin'), ['run', 'dev'])
+    .withHttpEndpoint({ env: 'PORT' })
+    .withEnvironment('PLATFORM_URL', platformEndpoint)
+    .withEnvironment('AUTH_ISSUER', zitadel.getEndpoint('http'))
+    .withEnvironment('AUTH_CLIENT_ID', 'tronderleikan-admin')
+    .withEnvironment('SESSION_SECRET', adminSessionSecret)
+    .withEnvironment('OTEL_EXPORTER_OTLP_ENDPOINT', otlpEndpoint)
+    .withEnvironment('OTEL_SERVICE_NAME', 'admin')
+    .waitFor(zitadel)
+    .waitFor(zitadelSeed);
+  await adminApp;
+} else {
+  void adminSessionSecret;
+}
+
 await builder.build().run();

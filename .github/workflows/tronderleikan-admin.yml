@@ -1,0 +1,34 @@
+# TronderLeikan admin (TanStack Start admin-plane, basePath /admin): build-once-
+# promote via _build-deploy.yml (SPEC §11). Selvstendig app - ingen pkg-avhengighet,
+# så Dockerfile ligger i context-roten (apps/tronderleikan/admin).
+name: tronderleikan-admin
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/tronderleikan/admin/**"
+      - ".github/workflows/tronderleikan-admin.yml"
+      - ".github/workflows/_build-deploy.yml"
+      - ".github/actions/gitops-promote/**"
+      - ".github/actions/docker-build/**"
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Eksisterende tag å deploye, f.eks. 2026-07-05-9571da7 (rollback/promote). Tom = bygg current."
+        required: false
+
+# Caller må gi minst det reusable-workflowen krever (repo-default er read-only).
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/_build-deploy.yml
+    with:
+      app: tronderleikan-admin
+      app_dir: apps/tronderleikan/admin
+      image: ghcr.io/kongebra/tronderleikan-admin
+      image_tag: ${{ github.event.inputs.image_tag || '' }}
+    secrets: inherit
