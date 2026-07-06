@@ -28,16 +28,19 @@ type Job struct {
 	FinishedAt         *time.Time
 	TranslatedMarkdown *string
 	TranslatedLang     *string
+	VideoTitle         *string
+	VideoDescription   *string
 }
 
 const jobCols = `id, module, input, status, attempts, progress, error,
-	result_markdown, created_at, started_at, finished_at, translated_markdown, translated_lang`
+	result_markdown, created_at, started_at, finished_at, translated_markdown, translated_lang,
+	video_title, video_description`
 
 func scanJob(row pgx.Row) (*Job, error) {
 	var j Job
 	err := row.Scan(&j.ID, &j.Module, &j.Input, &j.Status, &j.Attempts, &j.Progress,
 		&j.Error, &j.ResultMarkdown, &j.CreatedAt, &j.StartedAt, &j.FinishedAt,
-		&j.TranslatedMarkdown, &j.TranslatedLang)
+		&j.TranslatedMarkdown, &j.TranslatedLang, &j.VideoTitle, &j.VideoDescription)
 	if err != nil {
 		return nil, err
 	}
@@ -140,6 +143,15 @@ func List(ctx context.Context, pool *pgxpool.Pool, limit int) ([]Job, error) {
 		jobs = append(jobs, *j)
 	}
 	return jobs, rows.Err()
+}
+
+// SetVideoMeta persists the video's title + description on the job, so the
+// front-page list can show a human-readable title instead of the raw URL.
+func SetVideoMeta(ctx context.Context, pool *pgxpool.Pool, id int64, title, description string) error {
+	_, err := pool.Exec(ctx,
+		`UPDATE jobs SET video_title = $2, video_description = $3 WHERE id = $1`,
+		id, title, description)
+	return err
 }
 
 // SetTranslation caches a translated summary on the job.

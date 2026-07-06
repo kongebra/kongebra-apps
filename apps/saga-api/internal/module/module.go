@@ -29,10 +29,18 @@ type Deps struct {
 	ChunkTimeout time.Duration // per-LLM-call budget, not per-job
 }
 
+// Result is what a module produces on success: the rendered Markdown plus
+// any video metadata worth surfacing on the job (front-page list title, etc).
+type Result struct {
+	Markdown         string
+	VideoTitle       string
+	VideoDescription string
+}
+
 type Module interface {
 	Name() string
 	InputKind() string // "url" now; "text", "file" later
-	Run(ctx context.Context, input json.RawMessage, deps Deps, emit func(Event)) (string, error)
+	Run(ctx context.Context, input json.RawMessage, deps Deps, emit func(Event)) (Result, error)
 }
 
 var registry = map[string]Module{}

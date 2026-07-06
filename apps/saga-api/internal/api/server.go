@@ -43,19 +43,21 @@ func New(pool *pgxpool.Pool, bus *Bus, llmClient *llm.Client, version string) ht
 // jobJSON is the wire shape for a job. Result only rides along when full=true.
 func jobJSON(j *queue.Job, full bool) map[string]any {
 	m := map[string]any{
-		"id":         j.ID,
-		"module":     j.Module,
-		"input":      json.RawMessage(j.Input),
-		"status":     j.Status,
-		"attempts":   j.Attempts,
-		"progress":   j.Progress,
-		"error":      j.Error,
-		"created_at": j.CreatedAt.Format(time.RFC3339),
+		"id":          j.ID,
+		"module":      j.Module,
+		"input":       json.RawMessage(j.Input),
+		"status":      j.Status,
+		"attempts":    j.Attempts,
+		"progress":    j.Progress,
+		"error":       j.Error,
+		"created_at":  j.CreatedAt.Format(time.RFC3339),
+		"video_title": j.VideoTitle,
 	}
 	if full {
 		m["result_markdown"] = j.ResultMarkdown
 		m["translated_markdown"] = j.TranslatedMarkdown
 		m["translated_lang"] = j.TranslatedLang
+		m["video_description"] = j.VideoDescription
 	}
 	return m
 }

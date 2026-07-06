@@ -23,8 +23,8 @@ type echoModule struct{}
 
 func (echoModule) Name() string      { return "test-echo" }
 func (echoModule) InputKind() string { return "url" }
-func (echoModule) Run(ctx context.Context, in json.RawMessage, d module.Deps, emit func(module.Event)) (string, error) {
-	return "x", nil
+func (echoModule) Run(ctx context.Context, in json.RawMessage, d module.Deps, emit func(module.Event)) (module.Result, error) {
+	return module.Result{Markdown: "x"}, nil
 }
 
 // testServer boots a server against a real Postgres with a placeholder llm
