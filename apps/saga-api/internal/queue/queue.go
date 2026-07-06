@@ -15,26 +15,29 @@ import (
 const MaxAttempts = 3
 
 type Job struct {
-	ID             int64
-	Module         string
-	Input          []byte
-	Status         string
-	Attempts       int
-	Progress       string
-	Error          *string
-	ResultMarkdown *string
-	CreatedAt      time.Time
-	StartedAt      *time.Time
-	FinishedAt     *time.Time
+	ID                 int64
+	Module             string
+	Input              []byte
+	Status             string
+	Attempts           int
+	Progress           string
+	Error              *string
+	ResultMarkdown     *string
+	CreatedAt          time.Time
+	StartedAt          *time.Time
+	FinishedAt         *time.Time
+	TranslatedMarkdown *string
+	TranslatedLang     *string
 }
 
 const jobCols = `id, module, input, status, attempts, progress, error,
-	result_markdown, created_at, started_at, finished_at`
+	result_markdown, created_at, started_at, finished_at, translated_markdown, translated_lang`
 
 func scanJob(row pgx.Row) (*Job, error) {
 	var j Job
 	err := row.Scan(&j.ID, &j.Module, &j.Input, &j.Status, &j.Attempts, &j.Progress,
-		&j.Error, &j.ResultMarkdown, &j.CreatedAt, &j.StartedAt, &j.FinishedAt)
+		&j.Error, &j.ResultMarkdown, &j.CreatedAt, &j.StartedAt, &j.FinishedAt,
+		&j.TranslatedMarkdown, &j.TranslatedLang)
 	if err != nil {
 		return nil, err
 	}
@@ -137,6 +140,14 @@ func List(ctx context.Context, pool *pgxpool.Pool, limit int) ([]Job, error) {
 		jobs = append(jobs, *j)
 	}
 	return jobs, rows.Err()
+}
+
+// SetTranslation caches a translated summary on the job.
+func SetTranslation(ctx context.Context, pool *pgxpool.Pool, id int64, lang, markdown string) error {
+	_, err := pool.Exec(ctx,
+		`UPDATE jobs SET translated_markdown = $2, translated_lang = $3 WHERE id = $1`,
+		id, markdown, lang)
+	return err
 }
 
 // Retry re-arms a failed job from the UI. Returns false if the job is not failed.

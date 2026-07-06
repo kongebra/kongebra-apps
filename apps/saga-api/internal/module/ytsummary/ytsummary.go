@@ -42,7 +42,7 @@ func (Module) Run(ctx context.Context, raw json.RawMessage, deps module.Deps, em
 		return "", errors.New("input.url is required")
 	}
 	if in.Lang == "" {
-		in.Lang = "no"
+		in.Lang = "en"
 	}
 	if in.Model == "" {
 		in.Model = defaultModel

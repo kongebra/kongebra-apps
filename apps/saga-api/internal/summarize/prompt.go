@@ -42,3 +42,13 @@ Merge duplicate points across parts.
 Part summaries:
 %s`, title, langName(lang), strings.Join(parts, "\n\n---\n\n"))
 }
+
+// TranslatePrompt asks the model to translate a Markdown summary into the target
+// language while preserving the Markdown structure.
+func TranslatePrompt(targetLang, markdown string) string {
+	return fmt.Sprintf(`Translate the following Markdown text into %s.
+Preserve the Markdown structure (headings, bullet lists, links) exactly.
+Output only the translated Markdown, no preamble.
+
+%s`, langName(targetLang), markdown)
+}

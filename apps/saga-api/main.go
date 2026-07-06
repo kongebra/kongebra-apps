@@ -52,7 +52,7 @@ func main() {
 	bus := api.NewBus()
 	go worker.Run(ctx, pool, deps, bus)
 
-	srv := &http.Server{Addr: ":" + cfg.Port, Handler: api.New(pool, bus, version)}
+	srv := &http.Server{Addr: ":" + cfg.Port, Handler: api.New(pool, bus, deps.LLM, version)}
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
