@@ -104,7 +104,7 @@ function IndexPage() {
 }
 
 function JobRow({ job }: { job: Job }) {
-  const title = typeof job.input.url === "string" ? job.input.url : `job ${job.id}`
+  const title = job.video_title || (typeof job.input.url === "string" ? job.input.url : `job ${job.id}`)
   return (
     <Link to="/jobs/$id" params={{ id: String(job.id) }}>
       <Card className="flex flex-row items-center gap-3 p-4 transition-colors hover:bg-accent">
