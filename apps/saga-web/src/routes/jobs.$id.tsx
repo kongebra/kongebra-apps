@@ -155,23 +155,29 @@ function SummaryView({ job }: { job: Job }) {
   const [showNo, setShowNo] = useState(false)
   const [translated, setTranslated] = useState<string | null>(job.translated_markdown ?? null)
   const [loading, setLoading] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
 
   async function toNorwegian() {
     if (translated) {
       setShowNo(true)
       return
     }
+    setErr(null)
     setLoading(true)
-    const res = await fetch(`/api/jobs/${job.id}/translate`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ lang: "no" }),
-    })
-    setLoading(false)
-    if (res.ok) {
+    try {
+      const res = await fetch(`/api/jobs/${job.id}/translate`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ lang: "no" }),
+      })
+      if (!res.ok) throw new Error(`translate failed: ${res.status}`)
       const { translated_markdown } = (await res.json()) as { translated_markdown: string }
       setTranslated(translated_markdown)
       setShowNo(true)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -186,6 +192,7 @@ function SummaryView({ job }: { job: Job }) {
           {loading ? "Translating..." : "Norsk"}
         </Button>
       </div>
+      {err && <p className="text-sm text-destructive">{err}</p>}
       {loading ? (
         <div className="space-y-2">
           <Skeleton className="h-4 w-full" />

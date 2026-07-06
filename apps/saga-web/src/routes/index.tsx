@@ -109,7 +109,12 @@ function JobRow({ job }: { job: Job }) {
     <Link to="/jobs/$id" params={{ id: String(job.id) }}>
       <Card className="flex flex-row items-center gap-3 p-4 transition-colors hover:bg-accent">
         <StatusPill status={job.status} />
-        <span className="flex-1 truncate">{title}</span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate">{title}</p>
+          {job.video_description && (
+            <p className="truncate text-sm text-muted-foreground">{job.video_description}</p>
+          )}
+        </div>
         <span className="text-sm text-muted-foreground">
           {job.status === "running" && job.progress ? job.progress : ""}
         </span>
