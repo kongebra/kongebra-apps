@@ -21,7 +21,7 @@ type fakeFetcher struct {
 	err   error
 }
 
-func (f fakeFetcher) Fetch(ctx context.Context, url string) (ytdlp.Video, error) {
+func (f fakeFetcher) Fetch(ctx context.Context, url, lang string) (ytdlp.Video, error) {
 	return f.video, f.err
 }
 
@@ -29,7 +29,7 @@ func (f fakeFetcher) Fetch(ctx context.Context, url string) (ytdlp.Video, error)
 // context passed to Fetch is cancelled, then returns the context's error.
 type hangingFetcher struct{}
 
-func (hangingFetcher) Fetch(ctx context.Context, url string) (ytdlp.Video, error) {
+func (hangingFetcher) Fetch(ctx context.Context, url, lang string) (ytdlp.Video, error) {
 	<-ctx.Done()
 	return ytdlp.Video{}, ctx.Err()
 }

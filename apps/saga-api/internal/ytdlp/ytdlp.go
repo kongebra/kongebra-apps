@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"saga-api/internal/vtt"
 )
@@ -25,7 +26,7 @@ type Video struct {
 }
 
 type Fetcher interface {
-	Fetch(ctx context.Context, url string) (Video, error)
+	Fetch(ctx context.Context, url, lang string) (Video, error)
 }
 
 // Exec is the real yt-dlp-backed Fetcher.
@@ -34,10 +35,20 @@ type Exec struct {
 	WorkDir string // writable dir for subtitle downloads (emptyDir in k8s)
 }
 
-// subLangPreference: Norwegian first, then English, then whatever exists.
-var subLangPreference = []string{"no", "nb", "en"}
+// subLangs orders subtitle preference by the requested summary language, then
+// English, deduped. Transcript language is irrelevant to output (the LLM
+// summarizes into `lang` regardless), so we fetch the FEWEST subs that satisfy
+// intent: an English default resolves to just ["en"] = one timedtext request,
+// which is the main 429 lever (each extra --sub-lang is another throttled call).
+func subLangs(lang string) []string {
+	langs := []string{lang}
+	if lang != "en" {
+		langs = append(langs, "en")
+	}
+	return langs
+}
 
-func (e Exec) Fetch(ctx context.Context, url string) (Video, error) {
+func (e Exec) Fetch(ctx context.Context, url, lang string) (Video, error) {
 	var v Video
 
 	meta, err := e.run(ctx, "-J", "--skip-download", url)
@@ -62,14 +73,15 @@ func (e Exec) Fetch(ctx context.Context, url string) (Video, error) {
 	}
 	defer os.RemoveAll(dir)
 
+	langs := subLangs(lang)
 	if _, err := e.run(ctx,
 		"--skip-download", "--write-subs", "--write-auto-subs",
-		"--sub-langs", "no,nb,en", "--sub-format", "vtt",
+		"--sub-langs", strings.Join(langs, ","), "--sub-format", "vtt",
 		"-o", filepath.Join(dir, "%(id)s.%(ext)s"), url); err != nil {
 		return v, err
 	}
 
-	path, err := pickSubtitle(dir, v.ID)
+	path, err := pickSubtitle(dir, v.ID, langs)
 	if err != nil {
 		return v, err
 	}
@@ -82,8 +94,8 @@ func (e Exec) Fetch(ctx context.Context, url string) (Video, error) {
 	return v, err
 }
 
-func pickSubtitle(dir, id string) (string, error) {
-	for _, lang := range subLangPreference {
+func pickSubtitle(dir, id string, langs []string) (string, error) {
+	for _, lang := range langs {
 		p := filepath.Join(dir, id+"."+lang+".vtt")
 		if _, err := os.Stat(p); err == nil {
 			return p, nil

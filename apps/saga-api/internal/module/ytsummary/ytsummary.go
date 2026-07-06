@@ -50,7 +50,7 @@ func (Module) Run(ctx context.Context, raw json.RawMessage, deps module.Deps, em
 
 	emit(module.Event{Stage: "fetching"})
 	fetchCtx, cancel := context.WithTimeout(ctx, deps.ChunkTimeout)
-	v, err := deps.Fetcher.Fetch(fetchCtx, in.URL)
+	v, err := deps.Fetcher.Fetch(fetchCtx, in.URL, in.Lang)
 	cancel()
 	if err != nil {
 		return module.Result{}, err
