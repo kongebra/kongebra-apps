@@ -76,7 +76,7 @@ jobs:
     runs-on: ubuntu-latest
     # Serialiser gitops-skriving per app+env så samtidige app-pushes ikke klobber hverandre.
     concurrency:
-      group: gitops-${{ inputs.app }}-dev
+      group: gitops-${{ inputs.image }}-dev
       cancel-in-progress: false
     steps:
       - name: Checkout caller repo (for composite action)
@@ -98,7 +98,7 @@ jobs:
     # environment: production er selve gaten - required reviewer må godkjenne før dette kjører.
     environment: production
     concurrency:
-      group: gitops-${{ inputs.app }}-prod
+      group: gitops-${{ inputs.image }}-prod
       cancel-in-progress: false
     steps:
       - name: Checkout caller repo (for composite action)

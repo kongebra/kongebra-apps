@@ -27,7 +27,7 @@ jobs:
   deploy:
     uses: ./.github/workflows/_build-deploy.yml
     with:
-      app: tronderleikan-roster
+      app: tronderleikan
       # Context er apps/tronderleikan (roster bruker pkg via replace ../pkg),
       # derfor eksplisitt dockerfile-input.
       app_dir: apps/tronderleikan

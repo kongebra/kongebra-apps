@@ -27,7 +27,7 @@ jobs:
   deploy:
     uses: ./.github/workflows/_build-deploy.yml
     with:
-      app: tronderleikan-web
+      app: tronderleikan
       app_dir: apps/tronderleikan/web
       image: ghcr.io/kongebra/tronderleikan-web
       image_tag: ${{ github.event.inputs.image_tag || '' }}
