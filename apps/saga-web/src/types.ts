@@ -11,6 +11,8 @@ export interface Job {
   created_at: string
   // present only on the single-job endpoint, not in the list
   result_markdown?: string | null
+  translated_markdown?: string | null
+  translated_lang?: string | null
 }
 
 // SSE event shape from GET /api/events (after the initial snapshot).
