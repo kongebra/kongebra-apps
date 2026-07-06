@@ -97,12 +97,15 @@ func pickSubtitle(dir, id string) (string, error) {
 }
 
 // resilience flags make yt-dlp ride out YouTube's rate limiting itself: retry
-// transient HTTP errors (incl. 429) with exponential backoff, and pace subtitle
+// transient HTTP errors (incl. 429) with a fixed sleep, and pace subtitle
 // (timedtext) downloads which YouTube throttles aggressively. Prepended to every
 // invocation - harmless on the metadata (-J) call.
+// ponytail: plain-number --retry-sleep (5s) instead of exp/linear - the typed
+// "http:exp=START:END" form is version-fragile (2026.06.09 rejected "http=exp=3:60");
+// a plain number is valid on every yt-dlp version. Bump if 429s persist.
 var resilienceArgs = []string{
 	"--retries", "5",
-	"--retry-sleep", "http=exp=3:60",
+	"--retry-sleep", "5",
 	"--extractor-retries", "3",
 	"--sleep-subtitles", "2",
 }
