@@ -12,6 +12,6 @@ export function Markdown({ source }: { source: string }) {
     const raw = marked.parse(source, { async: false }) as string
     setHtml(DOMPurify.sanitize(raw))
   }, [source])
-  if (html === null) return <p style={{ color: "#999" }}>Rendering...</p>
-  return <div dangerouslySetInnerHTML={{ __html: html }} />
+  if (html === null) return <p className="text-muted-foreground">Rendering...</p>
+  return <div className="prose dark:prose-invert max-w-none" dangerouslySetInnerHTML={{ __html: html }} />
 }

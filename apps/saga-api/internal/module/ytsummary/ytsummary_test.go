@@ -53,15 +53,18 @@ func deps(t *testing.T, f ytdlp.Fetcher, reply string) module.Deps {
 func TestRunSinglePass(t *testing.T) {
 	f := fakeFetcher{video: ytdlp.Video{ID: "x", Title: "Short Video", Transcript: "short transcript"}}
 	var events []module.Event
-	md, err := Module{}.Run(context.Background(),
+	res, err := Module{}.Run(context.Background(),
 		json.RawMessage(`{"url":"https://youtube.com/watch?v=x"}`),
 		deps(t, f, "the summary"),
 		func(e module.Event) { events = append(events, e) })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(md, "# Short Video") || !strings.Contains(md, "the summary") {
-		t.Errorf("markdown: %s", md)
+	if !strings.Contains(res.Markdown, "# Short Video") || !strings.Contains(res.Markdown, "the summary") {
+		t.Errorf("markdown: %s", res.Markdown)
+	}
+	if res.VideoTitle != "Short Video" {
+		t.Errorf("video title: %q", res.VideoTitle)
 	}
 	if events[0].Stage != "fetching" {
 		t.Errorf("first event: %+v", events[0])

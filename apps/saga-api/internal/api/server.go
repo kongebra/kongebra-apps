@@ -9,17 +9,24 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"saga-api/internal/llm"
 	"saga-api/internal/module"
 	"saga-api/internal/queue"
+	"saga-api/internal/summarize"
 )
+
+// defaultTranslateModel is the model used for the translate endpoint - same
+// small model the worker uses, since translation is a short single-pass call.
+const defaultTranslateModel = "gemma4:e4b"
 
 type server struct {
 	pool *pgxpool.Pool
 	bus  *Bus
+	llm  *llm.Client
 }
 
-func New(pool *pgxpool.Pool, bus *Bus, version string) http.Handler {
-	s := &server{pool: pool, bus: bus}
+func New(pool *pgxpool.Pool, bus *Bus, llmClient *llm.Client, version string) http.Handler {
+	s := &server{pool: pool, bus: bus, llm: llmClient}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "ok %s", version)
@@ -28,6 +35,7 @@ func New(pool *pgxpool.Pool, bus *Bus, version string) http.Handler {
 	mux.HandleFunc("GET /api/jobs", s.listJobs)
 	mux.HandleFunc("GET /api/jobs/{id}", s.getJob)
 	mux.HandleFunc("POST /api/jobs/{id}/retry", s.retryJob)
+	mux.HandleFunc("POST /api/jobs/{id}/translate", s.translate)
 	mux.HandleFunc("GET /api/events", s.events)
 	return mux
 }
@@ -35,17 +43,21 @@ func New(pool *pgxpool.Pool, bus *Bus, version string) http.Handler {
 // jobJSON is the wire shape for a job. Result only rides along when full=true.
 func jobJSON(j *queue.Job, full bool) map[string]any {
 	m := map[string]any{
-		"id":         j.ID,
-		"module":     j.Module,
-		"input":      json.RawMessage(j.Input),
-		"status":     j.Status,
-		"attempts":   j.Attempts,
-		"progress":   j.Progress,
-		"error":      j.Error,
-		"created_at": j.CreatedAt.Format(time.RFC3339),
+		"id":          j.ID,
+		"module":      j.Module,
+		"input":       json.RawMessage(j.Input),
+		"status":      j.Status,
+		"attempts":    j.Attempts,
+		"progress":    j.Progress,
+		"error":       j.Error,
+		"created_at":  j.CreatedAt.Format(time.RFC3339),
+		"video_title": j.VideoTitle,
 	}
 	if full {
 		m["result_markdown"] = j.ResultMarkdown
+		m["translated_markdown"] = j.TranslatedMarkdown
+		m["translated_lang"] = j.TranslatedLang
+		m["video_description"] = j.VideoDescription
 	}
 	return m
 }
@@ -133,6 +145,43 @@ func (s *server) retryJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// translate runs a done job's summary through the LLM into the target language,
+// caches it on the job, and returns it. Uses the shared llm chokepoint (the
+// n=1 semaphore serializes it against the worker). ponytail: non-streaming - a
+// summary is short (~10-20s); upgrade path is an SSE token stream if it drags.
+func (s *server) translate(w http.ResponseWriter, r *http.Request) {
+	job := s.jobFromPath(w, r)
+	if job == nil {
+		return
+	}
+	var req struct {
+		Lang string `json:"lang"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Lang == "" {
+		http.Error(w, "lang required", http.StatusBadRequest)
+		return
+	}
+	if job.Status != "done" || job.ResultMarkdown == nil {
+		http.Error(w, "job is not done", http.StatusConflict)
+		return
+	}
+	// Already translated to this lang -> return the cache.
+	if job.TranslatedLang != nil && *job.TranslatedLang == req.Lang && job.TranslatedMarkdown != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"translated_markdown": *job.TranslatedMarkdown})
+		return
+	}
+	md, err := s.llm.Chat(r.Context(), defaultTranslateModel, summarize.TranslatePrompt(req.Lang, *job.ResultMarkdown), nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := queue.SetTranslation(r.Context(), s.pool, job.ID, req.Lang, md); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"translated_markdown": md})
 }
 
 // events streams job progress as SSE: one snapshot event, then live bus

@@ -1,23 +1,16 @@
-import { createFileRoute, useRouter, useNavigate } from "@tanstack/react-router"
+import { createFileRoute, useRouter, useNavigate, Link } from "@tanstack/react-router"
 import { createServerFn } from "@tanstack/react-start"
-import { Link } from "@tanstack/react-router"
 import { useEffect, useState } from "react"
 import type { Job, NewJobResponse } from "../types"
 import { listJobs } from "../api"
 import { Shell, StatusPill } from "../ui"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Card } from "@/components/ui/card"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
-// SSR + client-refresh data path for the job list (server-side fetch to saga-api).
-// ponytail: Job.input is Record<string, unknown> (arbitrary job-module payload);
-// createServerFn's compile-time output-serializability check can't prove an
-// index signature of `unknown` is serializable even though it round-trips
-// fine as JSON at runtime. `strict: { output: false }` opts out of that
-// check for this response rather than loosening Job.input in types.ts (Task
-// 2). Upgrade path: a recursive JsonValue type for Job.input would let this
-// (and Task 4's getJob wrapper) typecheck cleanly under the default strict mode.
 const fetchJobs = createServerFn({ method: "GET", strict: { output: false } }).handler(
-  async (): Promise<Job[]> => {
-    return listJobs()
-  },
+  async (): Promise<Job[]> => listJobs(),
 )
 
 export const Route = createFileRoute("/")({
@@ -25,7 +18,7 @@ export const Route = createFileRoute("/")({
   loader: () => fetchJobs(),
   errorComponent: () => (
     <Shell>
-      <p style={{ color: "#b00" }}>Cannot reach saga-api.</p>
+      <p className="text-destructive">Cannot reach saga-api.</p>
     </Shell>
   ),
 })
@@ -38,12 +31,11 @@ function IndexPage() {
   const navigate = useNavigate()
 
   const [url, setUrl] = useState("")
-  const [lang, setLang] = useState<"no" | "en">("no")
+  const [lang, setLang] = useState<"no" | "en">("en") // default English (v1.1)
   const [model, setModel] = useState(MODELS[0])
   const [submitting, setSubmitting] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
-  // Client auto-refresh of the list (same server-fn, single data path).
   useEffect(() => {
     const t = setInterval(() => router.invalidate(), 5_000)
     return () => clearInterval(t)
@@ -54,7 +46,6 @@ function IndexPage() {
     setSubmitting(true)
     setErr(null)
     try {
-      // Browser -> same-origin /api -> saga-api (ingress routes /api).
       const res = await fetch("/api/jobs", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -71,36 +62,39 @@ function IndexPage() {
 
   return (
     <Shell>
-      <form onSubmit={submit} style={{ display: "grid", gap: 10, marginBottom: 28 }}>
-        <input
+      <form onSubmit={submit} className="mb-8 grid gap-3">
+        <Input
           type="url"
           required
           placeholder="YouTube URL"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
-          style={{ padding: 10, fontSize: 15, border: "1px solid #ccc", borderRadius: 6 }}
         />
-        <div style={{ display: "flex", gap: 10 }}>
-          <select value={lang} onChange={(e) => setLang(e.target.value as "no" | "en")} style={{ padding: 8 }}>
-            <option value="no">Norwegian</option>
-            <option value="en">English</option>
-          </select>
-          <select value={model} onChange={(e) => setModel(e.target.value)} style={{ padding: 8 }}>
-            {MODELS.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-          <button type="submit" disabled={submitting} style={{ padding: "8px 20px", fontWeight: 600 }}>
+        <div className="flex flex-wrap gap-3">
+          <Select value={lang} onValueChange={(v) => setLang(v as "no" | "en")}>
+            <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="en">English</SelectItem>
+              <SelectItem value="no">Norwegian</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={model} onValueChange={setModel}>
+            <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {MODELS.map((m) => (
+                <SelectItem key={m} value={m}>{m}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button type="submit" disabled={submitting} className="ml-auto">
             {submitting ? "Submitting..." : "Summarize"}
-          </button>
+          </Button>
         </div>
-        {err && <p style={{ color: "#b00", margin: 0 }}>{err}</p>}
+        {err && <p className="text-sm text-destructive">{err}</p>}
       </form>
 
-      <div style={{ display: "grid", gap: 8 }}>
-        {jobs.length === 0 && <p style={{ color: "#666" }}>No jobs yet.</p>}
+      <div className="grid gap-2">
+        {jobs.length === 0 && <p className="text-muted-foreground">No jobs yet.</p>}
         {jobs.map((j) => (
           <JobRow key={j.id} job={j} />
         ))}
@@ -110,25 +104,21 @@ function IndexPage() {
 }
 
 function JobRow({ job }: { job: Job }) {
-  const title = typeof job.input.url === "string" ? job.input.url : `job ${job.id}`
+  const title = job.video_title || (typeof job.input.url === "string" ? job.input.url : `job ${job.id}`)
   return (
-    <Link
-      to="/jobs/$id"
-      params={{ id: String(job.id) }}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 12,
-        padding: 14,
-        border: "1px solid #ddd",
-        borderRadius: 8,
-        textDecoration: "none",
-        color: "inherit",
-      }}
-    >
-      <StatusPill status={job.status} />
-      <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</span>
-      <small style={{ color: "#999" }}>{job.status === "running" && job.progress ? job.progress : ""}</small>
+    <Link to="/jobs/$id" params={{ id: String(job.id) }}>
+      <Card className="flex flex-row items-center gap-3 p-4 transition-colors hover:bg-accent">
+        <StatusPill status={job.status} />
+        <div className="min-w-0 flex-1">
+          <p className="truncate">{title}</p>
+          {job.video_description && (
+            <p className="truncate text-sm text-muted-foreground">{job.video_description}</p>
+          )}
+        </div>
+        <span className="text-sm text-muted-foreground">
+          {job.status === "running" && job.progress ? job.progress : ""}
+        </span>
+      </Card>
     </Link>
   )
 }

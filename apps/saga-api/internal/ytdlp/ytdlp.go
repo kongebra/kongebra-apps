@@ -19,6 +19,7 @@ import (
 type Video struct {
 	ID          string
 	Title       string
+	Description string
 	DurationSec int
 	Transcript  string
 }
@@ -44,14 +45,16 @@ func (e Exec) Fetch(ctx context.Context, url string) (Video, error) {
 		return v, err
 	}
 	var m struct {
-		ID       string  `json:"id"`
-		Title    string  `json:"title"`
-		Duration float64 `json:"duration"`
+		ID          string  `json:"id"`
+		Title       string  `json:"title"`
+		Description string  `json:"description"`
+		Duration    float64 `json:"duration"`
 	}
 	if err := json.Unmarshal(meta, &m); err != nil {
 		return v, fmt.Errorf("parse yt-dlp metadata: %w", err)
 	}
 	v.ID, v.Title, v.DurationSec = m.ID, m.Title, int(m.Duration)
+	v.Description = m.Description
 
 	dir, err := os.MkdirTemp(e.WorkDir, "saga-sub-*")
 	if err != nil {

@@ -5,6 +5,10 @@ import type { Job, ProgressEvent } from "../types"
 import { getJob } from "../api"
 import { Shell, StatusPill } from "../ui"
 import { Markdown } from "../markdown"
+import { estimateEta } from "@/lib/eta"
+import { VideoCard } from "@/components/video-card"
+import { Button } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
 
 // ponytail: Job.input is Record<string, unknown> (arbitrary job-module payload);
 // createServerFn's compile-time output-serializability check can't prove an
@@ -36,6 +40,8 @@ function JobPage() {
   const [live, setLive] = useState<string>("") // rolling progress line
   const [tokens, setTokens] = useState<string>("") // streamed reduce tokens
   const tokensRef = useRef("")
+  const [eta, setEta] = useState<string | null>(null)
+  const chunkTiming = useRef<{ start: number; startIdx: number }>({ start: 0, startIdx: 0 })
   // Bumping streamKey (re)opens the SSE stream: on mount, and again after a
   // Retry moves a terminal job back to running.
   const [streamKey, setStreamKey] = useState(0)
@@ -50,6 +56,8 @@ function JobPage() {
     if (!cur || isTerminal(cur.status)) return
     tokensRef.current = ""
     setTokens("")
+    chunkTiming.current = { start: 0, startIdx: 0 }
+    setEta(null)
     const es = new EventSource(`/api/events?job=${id}`)
     let snapshotSeen = false
     es.onmessage = (e) => {
@@ -66,6 +74,12 @@ function JobPage() {
         setTokens(tokensRef.current)
       } else if (ev.stage) {
         setLive(ev.detail ? `${ev.stage}: ${ev.detail}` : ev.stage)
+        const m = ev.detail?.match(/chunk (\d+)\/(\d+)/)
+        if (m) {
+          const i = Number(m[1]), n = Number(m[2]), now = Date.now()
+          if (chunkTiming.current.start === 0) chunkTiming.current = { start: now, startIdx: i }
+          else setEta(estimateEta(chunkTiming.current.start, now, i - chunkTiming.current.startIdx, n - i))
+        }
       }
       if (ev.stage === "done" || ev.stage === "failed") {
         es.close()
@@ -94,7 +108,7 @@ function JobPage() {
   if (!job) {
     return (
       <Shell>
-        <p style={{ color: "#b00" }}>Job {id} not found.</p>
+        <p className="text-destructive">Job {id} not found.</p>
       </Shell>
     )
   }
@@ -105,35 +119,90 @@ function JobPage() {
 
   return (
     <Shell>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+      {typeof job.input.url === "string" && <VideoCard url={job.input.url} />}
+
+      <div className="mb-4 flex items-center gap-3">
         <StatusPill status={job.status} />
         {safeHref ? (
-          <a href={safeHref} target="_blank" rel="noreferrer" style={{ color: "#0969da", wordBreak: "break-all" }}>
+          <a href={safeHref} target="_blank" rel="noreferrer" className="break-all text-primary underline-offset-4 hover:underline">
             {title}
           </a>
         ) : (
-          <span style={{ wordBreak: "break-all" }}>{title}</span>
+          <span className="break-all">{title}</span>
         )}
       </div>
 
       {!isTerminal(job.status) && (
-        <div style={{ marginBottom: 16 }}>
-          <p style={{ color: "#666" }}>{live || job.progress || job.status}</p>
-          {tokens && (
-            <pre style={{ whiteSpace: "pre-wrap", background: "#f6f8fa", padding: 12, borderRadius: 8 }}>{tokens}</pre>
-          )}
+        <div className="mb-4">
+          <p className="text-muted-foreground">{live || job.progress || job.status}{eta ? ` - ${eta} left` : ""}</p>
+          {tokens && <pre className="whitespace-pre-wrap rounded-lg bg-muted p-3 text-sm">{tokens}</pre>}
         </div>
       )}
 
       {job.status === "failed" && (
-        <div style={{ marginBottom: 16 }}>
-          <p style={{ color: "#b00" }}>{job.error ?? "failed"}</p>
+        <div className="mb-4">
+          <p className="text-destructive">{job.error ?? "failed"}</p>
           <RetryButton id={job.id} onRetried={onRetried} />
         </div>
       )}
 
-      {job.status === "done" && job.result_markdown && <Markdown source={job.result_markdown} />}
+      {job.status === "done" && job.result_markdown && <SummaryView job={job} />}
     </Shell>
+  )
+}
+
+function SummaryView({ job }: { job: Job }) {
+  const [showNo, setShowNo] = useState(false)
+  const [translated, setTranslated] = useState<string | null>(job.translated_markdown ?? null)
+  const [loading, setLoading] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  async function toNorwegian() {
+    if (translated) {
+      setShowNo(true)
+      return
+    }
+    setErr(null)
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/jobs/${job.id}/translate`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ lang: "no" }),
+      })
+      if (!res.ok) throw new Error(`translate failed: ${res.status}`)
+      const { translated_markdown } = (await res.json()) as { translated_markdown: string }
+      setTranslated(translated_markdown)
+      setShowNo(true)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const body = showNo && translated ? translated : job.result_markdown!
+  return (
+    <div>
+      <div className="mb-4 flex gap-2">
+        <Button variant={showNo ? "outline" : "default"} size="sm" onClick={() => setShowNo(false)}>
+          English
+        </Button>
+        <Button variant={showNo ? "default" : "outline"} size="sm" onClick={toNorwegian} disabled={loading}>
+          {loading ? "Translating..." : "Norsk"}
+        </Button>
+      </div>
+      {err && <p className="text-sm text-destructive">{err}</p>}
+      {loading ? (
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-5/6" />
+          <Skeleton className="h-4 w-2/3" />
+        </div>
+      ) : (
+        <Markdown source={body} />
+      )}
+    </div>
   )
 }
 
@@ -156,7 +225,7 @@ function RetryButton({ id, onRetried }: { id: number; onRetried: () => Promise<v
         if (res.ok) await onRetried()
         setBusy(false)
       }}
-      style={{ padding: "8px 20px", fontWeight: 600 }}
+      className="rounded-md bg-primary px-5 py-2 font-semibold text-primary-foreground disabled:opacity-50"
     >
       {busy ? "Retrying..." : "Retry"}
     </button>

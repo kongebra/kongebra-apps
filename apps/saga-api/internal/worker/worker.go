@@ -97,7 +97,7 @@ func ProcessOne(ctx context.Context, pool *pgxpool.Pool, deps module.Deps, bus *
 		}
 	}
 
-	md, err := mod.Run(ctx, job.Input, deps, emit)
+	res, err := mod.Run(ctx, job.Input, deps, emit)
 	if err != nil {
 		if ferr := queue.Fail(ctx, pool, job.ID, err.Error()); ferr != nil {
 			return true, ferr
@@ -113,7 +113,12 @@ func ProcessOne(ctx context.Context, pool *pgxpool.Pool, deps module.Deps, bus *
 		bus.Publish(job.ID, module.Event{Stage: stage, Detail: err.Error()})
 		return true, nil
 	}
-	if err := queue.Complete(ctx, pool, job.ID, md); err != nil {
+	if res.VideoTitle != "" || res.VideoDescription != "" {
+		if merr := queue.SetVideoMeta(ctx, pool, job.ID, res.VideoTitle, res.VideoDescription); merr != nil {
+			log.Printf("worker: job %d set video meta: %v", job.ID, merr)
+		}
+	}
+	if err := queue.Complete(ctx, pool, job.ID, res.Markdown); err != nil {
 		return true, err
 	}
 	bus.Publish(job.ID, module.Event{Stage: "done"})

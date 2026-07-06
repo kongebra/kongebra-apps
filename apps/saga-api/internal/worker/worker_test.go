@@ -20,17 +20,17 @@ type okModule struct{}
 
 func (okModule) Name() string      { return "test-ok" }
 func (okModule) InputKind() string { return "url" }
-func (okModule) Run(ctx context.Context, in json.RawMessage, d module.Deps, emit func(module.Event)) (string, error) {
+func (okModule) Run(ctx context.Context, in json.RawMessage, d module.Deps, emit func(module.Event)) (module.Result, error) {
 	emit(module.Event{Stage: "working"})
-	return "# result", nil
+	return module.Result{Markdown: "# result"}, nil
 }
 
 type failModule struct{}
 
 func (failModule) Name() string      { return "test-fail" }
 func (failModule) InputKind() string { return "url" }
-func (failModule) Run(ctx context.Context, in json.RawMessage, d module.Deps, emit func(module.Event)) (string, error) {
-	return "", errors.New("kaboom")
+func (failModule) Run(ctx context.Context, in json.RawMessage, d module.Deps, emit func(module.Event)) (module.Result, error) {
+	return module.Result{}, errors.New("kaboom")
 }
 
 func testPool(t *testing.T) *pgxpool.Pool {

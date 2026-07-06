@@ -19,3 +19,10 @@ func TestPromptsCarryLanguageAndTitle(t *testing.T) {
 		t.Errorf("reduce prompt: %s", r)
 	}
 }
+
+func TestTranslatePrompt(t *testing.T) {
+	p := TranslatePrompt("no", "# Title\n\n- point")
+	if !strings.Contains(p, "Norwegian") || !strings.Contains(p, "# Title") {
+		t.Errorf("translate prompt: %s", p)
+	}
+}

@@ -33,16 +33,16 @@ type Module struct{}
 func (Module) Name() string      { return "yt-summary" }
 func (Module) InputKind() string { return "url" }
 
-func (Module) Run(ctx context.Context, raw json.RawMessage, deps module.Deps, emit func(module.Event)) (string, error) {
+func (Module) Run(ctx context.Context, raw json.RawMessage, deps module.Deps, emit func(module.Event)) (module.Result, error) {
 	var in input
 	if err := json.Unmarshal(raw, &in); err != nil {
-		return "", fmt.Errorf("parse input: %w", err)
+		return module.Result{}, fmt.Errorf("parse input: %w", err)
 	}
 	if in.URL == "" {
-		return "", errors.New("input.url is required")
+		return module.Result{}, errors.New("input.url is required")
 	}
 	if in.Lang == "" {
-		in.Lang = "no"
+		in.Lang = "en"
 	}
 	if in.Model == "" {
 		in.Model = defaultModel
@@ -53,7 +53,7 @@ func (Module) Run(ctx context.Context, raw json.RawMessage, deps module.Deps, em
 	v, err := deps.Fetcher.Fetch(fetchCtx, in.URL)
 	cancel()
 	if err != nil {
-		return "", err
+		return module.Result{}, err
 	}
 
 	chat := func(prompt string, onToken func(string)) (string, error) {
@@ -76,7 +76,7 @@ func (Module) Run(ctx context.Context, raw json.RawMessage, deps module.Deps, em
 			emit(module.Event{Stage: "summarizing", Detail: fmt.Sprintf("chunk %d/%d", i+1, len(chunks))})
 			part, cerr := chat(summarize.MapPrompt(in.Lang, v.Title, c), nil)
 			if cerr != nil {
-				return "", fmt.Errorf("chunk %d/%d: %w", i+1, len(chunks), cerr)
+				return module.Result{}, fmt.Errorf("chunk %d/%d: %w", i+1, len(chunks), cerr)
 			}
 			parts = append(parts, part)
 		}
@@ -84,8 +84,12 @@ func (Module) Run(ctx context.Context, raw json.RawMessage, deps module.Deps, em
 		summary, err = chat(summarize.ReducePrompt(in.Lang, v.Title, parts), streamToken)
 	}
 	if err != nil {
-		return "", err
+		return module.Result{}, err
 	}
 
-	return fmt.Sprintf("# %s\n\n<%s>\n\n%s\n", v.Title, in.URL, summary), nil
+	return module.Result{
+		Markdown:         fmt.Sprintf("# %s\n\n<%s>\n\n%s\n", v.Title, in.URL, summary),
+		VideoTitle:       v.Title,
+		VideoDescription: v.Description,
+	}, nil
 }
