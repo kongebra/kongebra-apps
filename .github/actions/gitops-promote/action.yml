@@ -50,29 +50,40 @@ runs:
         ENVIRONMENT: ${{ inputs.env }}
       run: |
         set -euo pipefail
-        cd "gitops/apps/${APP}/overlays/${ENVIRONMENT}"
         # Build-once-promote: pin på DIGEST (immutabel), ikke mutbar tag. Resolver digesten
         # fra taggen i GHCR (public image, ingen auth) - uniformt for både build og rollback,
         # og garanterer at prod får nøyaktig samme bytes som dev (kryptografisk, ikke tag-tillit).
         DIGEST=$(docker buildx imagetools inspect "${IMAGE}:${TAG}" --format '{{.Manifest.Digest}}')
         echo "Resolved ${IMAGE}:${TAG} -> ${DIGEST}"
-        kustomize edit set image "${IMAGE}=${IMAGE}@${DIGEST}"
 
         git config user.name "kongebra-ci[bot]"
         git config user.email "ci@users.noreply.github.com"
-        git add kustomization.yaml
 
-        if git diff --cached --quiet; then
-          echo "Tag uendret (${TAG}) for ${APP}/${ENVIRONMENT}, ingen commit."
-          exit 0
-        fi
-        git commit -m "promote ${APP} -> ${ENVIRONMENT} (${TAG} ${DIGEST})"
-
-        # rebase-retry mot samtidige pushes fra andre apper på delt gitops-main
-        for attempt in 1 2 3; do
-          git pull --rebase origin main && git push origin main && exit 0
-          echo "push-forsoek ${attempt} feilet, prover igjen..."
-          sleep 3
+        # Fler tjenester deler ÉN overlay-fil (apps/tronderleikan/overlays/<env>, hver
+        # tjeneste sin images:-entry). Ved samtidige promotes (delt-infra-endring treffer
+        # alle 5) unngår vi merge-konflikter ved å RE-DERIVERE i stedet for å rebase en
+        # ferdig commit: hver runde nullstiller til fersk origin/main og kjører kustomize
+        # edit på nytt, så vi aldri merger to redigeringer av samme images:-blokk. Kun
+        # push-race (lock ref) gjenstår -> ny runde. (Rebase av en pre-laget commit gav
+        # CONFLICT + låst arbeidstre som brant alle retries, 2026-07-07.)
+        cd gitops
+        OVERLAY="apps/${APP}/overlays/${ENVIRONMENT}"
+        for attempt in 1 2 3 4 5 6 7 8; do
+          git fetch --quiet origin main
+          git reset --hard --quiet origin/main
+          ( cd "$OVERLAY" && kustomize edit set image "${IMAGE}=${IMAGE}@${DIGEST}" )
+          git add "$OVERLAY/kustomization.yaml"
+          if git diff --cached --quiet; then
+            echo "Tag uendret (${TAG}) for ${APP}/${ENVIRONMENT}, ingen commit."
+            exit 0
+          fi
+          git commit -q -m "promote ${APP} -> ${ENVIRONMENT} (${TAG} ${DIGEST})"
+          if git push --quiet origin main; then
+            echo "Pushet (forsoek ${attempt})."
+            exit 0
+          fi
+          echo "push-forsoek ${attempt} feilet (samtidig push), re-deriverer..."
+          sleep $((attempt * 2))
         done
-        echo "Klarte ikke pushe til gitops etter 3 forsoek." >&2
+        echo "Klarte ikke pushe til gitops etter flere forsoek." >&2
         exit 1
