@@ -33,6 +33,32 @@ Purely a CI fix; ships independently of any Deployment existing, because `kustom
 
 Result: all 5 pipelines go green; images build once and pin into `apps/tronderleikan/overlays/{dev,prod}/kustomization.yaml`.
 
+### Phase 1 outcome + the shared-overlay write race (2026-07-07)
+
+Phase 1 is DONE and verified: all 5 service images are pinned in `apps/tronderleikan/overlays/dev/kustomization.yaml`, all 5 `deploy-dev` jobs green.
+
+Getting there surfaced a real bug the original `app:` fix alone did not solve. Because all 5 services now write ONE shared overlay file, a change touching all of them (e.g. the `_build-deploy.yml` edit itself) fires 5 concurrent promotes that race on `kustomization.yaml`:
+
+- The concurrency-key change (`app` -> `image`) was NOT the fix - both keyings give 5 distinct groups, so they stayed parallel. It IS still required though: it stops the 5 (now all `app: tronderleikan`) from collapsing into one group and cancelling each other's pending runs.
+- The real bug was in `gitops-promote`: it committed the kustomize edit, then `git pull --rebase`. Two edits to the same `images:` block merge-conflict; the rebase left a half-done state, and the retry loop's next `git pull --rebase` failed with "unmerged files", burning all 3 attempts. 2/5 lost the race.
+- Fix: **re-derive instead of rebase**. Each attempt `git fetch` + `git reset --hard FETCH_HEAD` + re-run `kustomize edit` + commit + push. Two edits never merge (each re-applies onto fresh main); only push lock-ref races remain -> next round. Bumped to 8 attempts with linear backoff.
+- Second fix (regression the rewrite introduced): `git config user.name/email` must be set AFTER `cd gitops` (`--local` targets the repo you are in), else the commit dies with "empty ident name". The original ordering had this right; the rewrite briefly broke it.
+
+Reference: `kongebra-apps/.github/actions/gitops-promote/action.yml`. Verified the git dance locally before shipping.
+
+### Prod deploy gate (decision PENDING, 2026-07-07)
+
+The `production` GitHub environment has a `required_reviewers` rule (reviewer: `kongebra`) -> every prod promote waits for a manual click. `GITOPS_DEPLOY_KEY` is a **repo** secret (not env-scoped), so removing the environment gate does not break the deploy key.
+
+Svein floated removing the manual approval ("approval -> bare deploy") and/or gating prod on dev being healthy first. A true dev-health gate is NOT feasible from a GitHub-hosted runner today: the cluster is tailnet-only, so CI cannot reach ArgoCD/k8s without a `tailscale/github-action` step + an auth-key secret. That is the deferred "real gate" work.
+
+Options captured (decision not yet made - asked, no answer):
+- Remove `required_reviewers` now -> prod auto-promotes; only safety is `deploy-prod: needs [deploy-dev, build]` + identical-bytes build-once-promote. Command: `gh api -X PUT repos/kongebra/kongebra-apps/environments/production --input -` with body `{"wait_timer":0,"reviewers":[],"deployment_branch_policy":null}`.
+- Keep approval until the tailscale dev-health precheck exists, then swap manual approval for the automated health gate.
+- Remove approval + a `wait_timer` (crude time buffer for ArgoCD to sync, no real health check).
+
+Deferred follow-up (the real prod precheck): a `deploy-prod` pre-step that joins the tailnet (`tailscale/github-action` + `TS_AUTHKEY` secret) and polls the ArgoCD `app-<svc>-dev` Application until `Synced/Healthy` (or fails) before promoting. Meaningful only once Phase 2 Deployments exist (today dev has no service workloads, so health is trivially green).
+
 ## Phase 2 - bring services live (dependency-gated, deferred)
 
 Write Deployment + Service manifests into `apps/tronderleikan/base/`, add `_components/hardened-workload` (its patch now has a Deployment to target), add `env` via `_components/env-{dev,prod}`, activate the ingressroute routes incrementally.
