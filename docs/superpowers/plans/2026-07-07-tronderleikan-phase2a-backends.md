@@ -1,5 +1,12 @@
 # TronderLeikan Phase 2a - backends live - Implementation Plan
 
+> **STATUS 2026-07-07: DEV DONE + VERIFIED.** All 3 backends Running in `tronderleikan-dev`, `app-tronderleikan-dev` Synced/Healthy, `/api/{platform,roster,competition}` route through Traefik. PROD pending: needs the platform/roster/competition images promoted through the `production` gate (prod overlay currently pins only `web`); a 6h Alertmanager silence is on `tronderleikan-prod` until it deploys.
+>
+> **Three bugs surfaced during deploy (all fixed):**
+> 1. **platform missing `AUTH_ISSUER`** - platform also builds an authn.Validator, not just roster/competition. Fixed: `envFrom tronderleikan-auth` on platform-deployment (gitops).
+> 2. **CNPG managed-role reconcile ordering** - the `roster`/`competition` `passwordSecret`s were created AFTER the cluster last reconciled, so the operator left the roles `pending-reconciliation` ("secret not found", stale) and never created the roles or their databases. Fix: restart the `cnpg-cloudnative-pg` operator to force reconcile. **Gotcha: create managed-role passwordSecrets before/around cluster creation, or nudge the operator afterwards.**
+> 3. **NATS JetStream stream overlap** - platform created its own `tl-platform` (`tl.platform.>`) stream, overlapping the shared `tl` (`tl.>`) stream that roster/competition ensure; JetStream rejects overlapping subjects, so roster/competition crashed. Fixed in kongebra-apps: platform now joins the shared `tl` stream (commit d313e4e). Convergence needed a manual `nats stream rm tl-platform` after the old image stopped running.
+>
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Deploy `platform`, `roster`, `competition` into `tronderleikan-{dev,prod}` so all three run healthy and serve `leikan.newb.no/api/{platform,roster,competition}`.
