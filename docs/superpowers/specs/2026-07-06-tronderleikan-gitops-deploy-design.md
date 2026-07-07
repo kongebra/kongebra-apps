@@ -50,12 +50,12 @@ Service facts (from code + Dockerfiles):
 Health probes: Go services use an exec probe `["/app", "-health"]` (distroless, no shell); frontends use httpGet `/healthz`.
 
 Blocking dependencies (verified in-cluster 2026-07-06):
-1. **Zitadel is `Missing`/`OutOfSync`** in ArgoCD (manifests exist: `bootstrap/zitadel.yaml`, `platform/zitadel/`). platform/roster/competition all need it (AUTH_ISSUER/AUDIENCE, ZITADEL_PAT). Needs its own investigation.
+1. ~~**Zitadel is `Missing`/`OutOfSync`**~~ **RESOLVED 2026-07-07.** Root cause: the out-of-band `zitadel-login-client` secret was never created (peer to `zitadel-masterkey`). It is the `IAM_LOGIN_CLIENT` SystemAPIUser keypair - the server hard-mounts `tls.crt`, so its absence left the server pod `ContainerCreating` (FailedMount). Created a matching `kubernetes.io/tls` keypair (self-signed, CN=`login-service`, per chart 10.0.4) + synced -> `zitadel` app now `Synced/Healthy`, login-v2 UI + console both HTTP 200 through Traefik. Procedure captured in gitops `SECRETS.md`. AUTH_ISSUER for the services = `https://auth.newb.no`.
 2. **DB role secrets absent**: `tronderleikan-db-roster` / `tronderleikan-db-competition` do not exist -> those CNPG managed roles have no password -> login impossible (fails safe). Create out-of-band per env (documented in `cluster.yaml` / SECRETS.md). platform uses the auto-generated `tronderleikan-db-app`.
-3. platform's `ZITADEL_PAT` secret only exists after Zitadel is up + seeded (machine user, IAM_OWNER).
+3. platform's `ZITADEL_PAT`: the Zitadel setup created secret `iam-admin-pat` (IAM_OWNER machine user, ns `zitadel`) - reflect/copy it into the tronderleikan namespaces or provision a dedicated platform machine user. No longer blocked on Zitadel being up.
 
 Sequence: Zitadel healthy -> create DB/auth/PAT secrets -> land Deployments (frontends first, no deps; then Go services) -> uncomment ingressroute routes as each backend Service appears (Traefik errors on routes with a missing backend - the overlay comments already prescribe this activation order).
 
 ## Scope
 
-Implement Phase 1 now. Phase 2 stays specced + sequenced but deferred until the Zitadel `Missing` rabbit hole is tackled.
+Phase 1 implemented 2026-07-06 (5 workflows + `_build-deploy.yml` concurrency; committed to kongebra-apps `main`, awaiting push). Zitadel unblocked 2026-07-07 (dep #1 above). Phase 2 (Deployments + DB/auth/PAT secrets) stays specced + sequenced; remaining blockers are the DB role secrets (#2) and wiring platform's PAT (#3).
