@@ -56,6 +56,9 @@ runs:
         DIGEST=$(docker buildx imagetools inspect "${IMAGE}:${TAG}" --format '{{.Manifest.Digest}}')
         echo "Resolved ${IMAGE}:${TAG} -> ${DIGEST}"
 
+        cd gitops
+        # git config må settes ETTER cd inn i gitops-repoet (local config = dette repoet);
+        # settes den i det ytre checkout-repoet får commit her "empty ident name" (2026-07-07).
         git config user.name "kongebra-ci[bot]"
         git config user.email "ci@users.noreply.github.com"
 
@@ -66,11 +69,10 @@ runs:
         # edit på nytt, så vi aldri merger to redigeringer av samme images:-blokk. Kun
         # push-race (lock ref) gjenstår -> ny runde. (Rebase av en pre-laget commit gav
         # CONFLICT + låst arbeidstre som brant alle retries, 2026-07-07.)
-        cd gitops
         OVERLAY="apps/${APP}/overlays/${ENVIRONMENT}"
         for attempt in 1 2 3 4 5 6 7 8; do
           git fetch --quiet origin main
-          git reset --hard --quiet origin/main
+          git reset --hard --quiet FETCH_HEAD
           ( cd "$OVERLAY" && kustomize edit set image "${IMAGE}=${IMAGE}@${DIGEST}" )
           git add "$OVERLAY/kustomization.yaml"
           if git diff --cached --quiet; then
