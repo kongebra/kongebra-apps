@@ -30,12 +30,16 @@ import (
 // version settes ved build via -ldflags "-X main.version=<tag>", env VERSION overstyrer.
 var version = "dev"
 
-// streamName + streamSubjects: JetStream-strømmen platform publiserer sine
-// domene-events til (SPEC §9). Ensures idempotent ved oppstart så lokal kjøring
-// og fersk cluster ikke krever manuell stream-oppsett.
+// streamName + streamSubjects: the ONE shared JetStream stream for the product
+// (SPEC §9) - all services ensure the same "tl"/"tl.>" stream idempotently, so a
+// fresh cluster or local run needs no manual stream setup. platform publishes its
+// domain events to tl.platform.* subjects (which fall under tl.>); roster/competition
+// consume via FilterSubjects. A per-service stream (e.g. tl-platform/tl.platform.>)
+// would OVERLAP this shared stream's subjects and JetStream rejects that (bit us
+// 2026-07-07: platform's old tl-platform collided with roster/competition's tl).
 const (
-	streamName     = "tl-platform"
-	streamSubjects = "tl.platform.>"
+	streamName     = "tl"
+	streamSubjects = "tl.>"
 )
 
 // healthCheck gjør en GET mot den lokale serverens /healthz og returnerer exit-kode.
