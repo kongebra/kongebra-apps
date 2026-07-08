@@ -6,6 +6,7 @@ import (
 
 	"github.com/zitadel/zitadel-go/v3/pkg/client"
 	adminpb "github.com/zitadel/zitadel-go/v3/pkg/client/zitadel/admin"
+	apppb "github.com/zitadel/zitadel-go/v3/pkg/client/zitadel/app"
 	managementpb "github.com/zitadel/zitadel-go/v3/pkg/client/zitadel/management"
 	objectpb "github.com/zitadel/zitadel-go/v3/pkg/client/zitadel/object"
 	objectv2pb "github.com/zitadel/zitadel-go/v3/pkg/client/zitadel/object/v2"
@@ -233,18 +234,73 @@ func (d *zitadelDirectory) EnsureUserGrant(ctx context.Context, orgID, userID, p
 }
 
 func (d *zitadelDirectory) FindOIDCApp(ctx context.Context, orgID, projectID, name string) (string, string, []string, bool, error) {
-	// TODO (Task A3): Implement FindOIDCApp to search for existing OIDC apps by name.
+	resp, err := d.api.ManagementService().ListApps(inOrg(ctx, orgID), &managementpb.ListAppsRequest{
+		ProjectId: projectID,
+		Queries: []*apppb.AppQuery{{
+			Query: &apppb.AppQuery_NameQuery{NameQuery: &apppb.AppNameQuery{
+				Name:   name,
+				Method: objectpb.TextQueryMethod_TEXT_QUERY_METHOD_EQUALS,
+			}},
+		}},
+	})
+	if err != nil {
+		return "", "", nil, false, fmt.Errorf("list apps: %w", err)
+	}
+	for _, a := range resp.GetResult() {
+		if a.GetName() != name {
+			continue
+		}
+		oidc := a.GetOidcConfig()
+		return a.GetId(), oidc.GetClientId(), oidc.GetRedirectUris(), true, nil
+	}
 	return "", "", nil, false, nil
 }
 
 func (d *zitadelDirectory) CreateOIDCApp(ctx context.Context, orgID, projectID string, spec OIDCAppSpec) (string, string, error) {
-	// TODO (Task A3): Implement CreateOIDCApp to create a new public PKCE OIDC app with redirect URIs.
-	return "", "", fmt.Errorf("not implemented")
+	resp, err := d.api.ManagementService().AddOIDCApp(inOrg(ctx, orgID), oidcAppRequest(projectID, spec))
+	if err != nil {
+		return "", "", fmt.Errorf("add oidc app: %w", err)
+	}
+	return resp.GetAppId(), resp.GetClientId(), nil
 }
 
 func (d *zitadelDirectory) UpdateOIDCApp(ctx context.Context, orgID, projectID, appID string, spec OIDCAppSpec) error {
-	// TODO (Task A3): Implement UpdateOIDCApp to update redirect URIs on an existing app.
-	return fmt.Errorf("not implemented")
+	_, err := d.api.ManagementService().UpdateOIDCAppConfig(inOrg(ctx, orgID), &managementpb.UpdateOIDCAppConfigRequest{
+		ProjectId:                projectID,
+		AppId:                    appID,
+		RedirectUris:             spec.RedirectURIs,
+		PostLogoutRedirectUris:   spec.PostLogoutURIs,
+		ResponseTypes:            []apppb.OIDCResponseType{apppb.OIDCResponseType_OIDC_RESPONSE_TYPE_CODE},
+		GrantTypes:               []apppb.OIDCGrantType{apppb.OIDCGrantType_OIDC_GRANT_TYPE_AUTHORIZATION_CODE, apppb.OIDCGrantType_OIDC_GRANT_TYPE_REFRESH_TOKEN},
+		AppType:                  apppb.OIDCAppType_OIDC_APP_TYPE_WEB,
+		AuthMethodType:           apppb.OIDCAuthMethodType_OIDC_AUTH_METHOD_TYPE_NONE,
+		AccessTokenType:          apppb.OIDCTokenType_OIDC_TOKEN_TYPE_JWT,
+		AccessTokenRoleAssertion: true,
+		DevMode:                  false,
+	})
+	if err != nil {
+		return fmt.Errorf("update oidc app: %w", err)
+	}
+	return nil
+}
+
+// oidcAppRequest builds a public PKCE web-app-request (SPEC section 10, Phase 2b plan
+// Global Constraints). Auth method NONE = no client secret; Code + PKCE.
+func oidcAppRequest(projectID string, spec OIDCAppSpec) *managementpb.AddOIDCAppRequest {
+	return &managementpb.AddOIDCAppRequest{
+		ProjectId:                projectID,
+		Name:                     spec.Name,
+		RedirectUris:             spec.RedirectURIs,
+		PostLogoutRedirectUris:   spec.PostLogoutURIs,
+		ResponseTypes:            []apppb.OIDCResponseType{apppb.OIDCResponseType_OIDC_RESPONSE_TYPE_CODE},
+		GrantTypes:               []apppb.OIDCGrantType{apppb.OIDCGrantType_OIDC_GRANT_TYPE_AUTHORIZATION_CODE, apppb.OIDCGrantType_OIDC_GRANT_TYPE_REFRESH_TOKEN},
+		AppType:                  apppb.OIDCAppType_OIDC_APP_TYPE_WEB,
+		AuthMethodType:           apppb.OIDCAuthMethodType_OIDC_AUTH_METHOD_TYPE_NONE,
+		Version:                  apppb.OIDCVersion_OIDC_VERSION_1_0,
+		AccessTokenType:          apppb.OIDCTokenType_OIDC_TOKEN_TYPE_JWT,
+		AccessTokenRoleAssertion: true,
+		DevMode:                  false,
+	}
 }
 
 var _ Directory = (*zitadelDirectory)(nil)
