@@ -14,25 +14,26 @@ import (
 // feile på kjøring nr. 2. Det gjør idempotens til noe testen faktisk beviser,
 // ikke bare antar.
 type fakeDirectory struct {
-	orgs         map[string]string   // name -> id
-	projects     map[string]string   // orgID/name -> id
-	roles        map[string]bool     // orgID/projectID/roleKey
-	grants       map[string]string   // ownerOrg/project/grantedOrg -> grantID
-	users        map[string]string   // orgID/email -> id
-	userGrants   map[string]bool     // orgID/userID/projectID/grantID
-	grantRoles   map[string][]string // grantID -> roleKeys (for assertions)
-	oidcApps     map[string]string   // orgID/projectID/name -> appID
-	oidcClientID map[string]string   // appID -> clientID
-	oidcRedirects map[string][]string // appID -> redirect URIs
-	createdCount map[string]int      // teller Create*-kall per type
-	seq          int
+	orgs           map[string]string   // name -> id
+	projects       map[string]string   // orgID/name -> id
+	roles          map[string]bool     // orgID/projectID/roleKey
+	grants         map[string]string   // ownerOrg/project/grantedOrg -> grantID
+	users          map[string]string   // orgID/email -> id
+	userGrants     map[string]bool     // orgID/userID/projectID/grantID
+	grantRoles     map[string][]string // grantID -> roleKeys (for assertions)
+	oidcApps       map[string]string   // orgID/projectID/name -> appID
+	oidcClientID   map[string]string   // appID -> clientID
+	oidcRedirects  map[string][]string // appID -> redirect URIs
+	oidcPostLogout map[string][]string // appID -> post-logout URIs
+	createdCount   map[string]int      // teller Create*-kall per type
+	seq            int
 }
 
 func newFakeDirectory() *fakeDirectory {
 	return &fakeDirectory{
 		orgs: map[string]string{}, projects: map[string]string{}, roles: map[string]bool{},
 		grants: map[string]string{}, users: map[string]string{}, userGrants: map[string]bool{},
-		grantRoles: map[string][]string{}, oidcApps: map[string]string{}, oidcClientID: map[string]string{}, oidcRedirects: map[string][]string{},
+		grantRoles: map[string][]string{}, oidcApps: map[string]string{}, oidcClientID: map[string]string{}, oidcRedirects: map[string][]string{}, oidcPostLogout: map[string][]string{},
 		createdCount: map[string]int{},
 	}
 }
@@ -133,12 +134,12 @@ func (f *fakeDirectory) EnsureUserGrant(_ context.Context, orgID, userID, projec
 	return nil
 }
 
-func (f *fakeDirectory) FindOIDCApp(_ context.Context, orgID, projectID, name string) (string, string, []string, bool, error) {
+func (f *fakeDirectory) FindOIDCApp(_ context.Context, orgID, projectID, name string) (string, string, []string, []string, bool, error) {
 	appID, ok := f.oidcApps[orgID+"/"+projectID+"/"+name]
 	if !ok {
-		return "", "", nil, false, nil
+		return "", "", nil, nil, false, nil
 	}
-	return appID, f.oidcClientID[appID], f.oidcRedirects[appID], true, nil
+	return appID, f.oidcClientID[appID], f.oidcRedirects[appID], f.oidcPostLogout[appID], true, nil
 }
 
 func (f *fakeDirectory) CreateOIDCApp(_ context.Context, orgID, projectID string, spec OIDCAppSpec) (string, string, error) {
@@ -150,12 +151,14 @@ func (f *fakeDirectory) CreateOIDCApp(_ context.Context, orgID, projectID string
 	f.oidcApps[key] = appID
 	f.oidcClientID[appID] = f.nextID("client") + "@tronderleikan"
 	f.oidcRedirects[appID] = spec.RedirectURIs
+	f.oidcPostLogout[appID] = spec.PostLogoutURIs
 	f.createdCount["oidcApp"]++
 	return appID, f.oidcClientID[appID], nil
 }
 
 func (f *fakeDirectory) UpdateOIDCApp(_ context.Context, _, _, appID string, spec OIDCAppSpec) error {
 	f.oidcRedirects[appID] = spec.RedirectURIs
+	f.oidcPostLogout[appID] = spec.PostLogoutURIs
 	f.createdCount["oidcUpdate"]++
 	return nil
 }
@@ -333,7 +336,11 @@ func TestSeedOIDCAppsIdempotentAndConverge(t *testing.T) {
 	fake := newFakeDirectory()
 	cfg := testConfig()
 	cfg.OIDCApps = []OIDCAppSpec{
-		{Name: "tronderleikan-web", RedirectURIs: []string{"https://leikan.newb.no/auth/callback", "https://leikan-dev.newb.no/auth/callback"}},
+		{
+			Name:           "tronderleikan-web",
+			RedirectURIs:   []string{"https://leikan.newb.no/auth/callback", "https://leikan-dev.newb.no/auth/callback"},
+			PostLogoutURIs: []string{"https://leikan.newb.no/", "https://leikan-dev.newb.no/"},
+		},
 	}
 	ctx := context.Background()
 
@@ -368,5 +375,18 @@ func TestSeedOIDCAppsIdempotentAndConverge(t *testing.T) {
 	}
 	if res1.ClientIDs["tronderleikan-web"] != res2.ClientIDs["tronderleikan-web"] {
 		t.Fatalf("client_id changed between runs")
+	}
+
+	// Post-logout-only drift must also converge (regression: a stale post-logout set
+	// made Zitadel reject logout with "post_logout_redirect_uri invalid").
+	fake.oidcPostLogout[appID] = []string{"https://leikan.newb.no/"}
+	if _, err := NewSeeder(fake, nil).Seed(ctx, cfg); err != nil {
+		t.Fatalf("run 3: %v", err)
+	}
+	if fake.createdCount["oidcUpdate"] != 2 {
+		t.Fatalf("post-logout drift did not trigger a converge-update, oidcUpdate=%d", fake.createdCount["oidcUpdate"])
+	}
+	if !sameStringSet(fake.oidcPostLogout[appID], cfg.OIDCApps[0].PostLogoutURIs) {
+		t.Fatalf("post-logout did not converge: %v", fake.oidcPostLogout[appID])
 	}
 }

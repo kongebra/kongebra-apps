@@ -71,7 +71,7 @@ type Directory interface {
 
 	// FindOIDCApp returnerer appID, client_id og nåværende redirect-URIer, så
 	// Seeder kan konvergere redirect-settet (ikke bare eksistensen).
-	FindOIDCApp(ctx context.Context, orgID, projectID, name string) (appID, clientID string, currentRedirects []string, found bool, err error)
+	FindOIDCApp(ctx context.Context, orgID, projectID, name string) (appID, clientID string, currentRedirects, currentPostLogout []string, found bool, err error)
 	CreateOIDCApp(ctx context.Context, orgID, projectID string, spec OIDCAppSpec) (appID, clientID string, err error)
 	// UpdateOIDCApp setter redirect/post-logout-settet (brukes når det avviker).
 	UpdateOIDCApp(ctx context.Context, orgID, projectID, appID string, spec OIDCAppSpec) error
@@ -270,16 +270,18 @@ func (s *Seeder) ensureUser(ctx context.Context, orgID string, u UserSpec, passw
 }
 
 func (s *Seeder) ensureOIDCApp(ctx context.Context, orgID, projectID string, spec OIDCAppSpec) (string, error) {
-	appID, clientID, currentRedirects, found, err := s.dir.FindOIDCApp(ctx, orgID, projectID, spec.Name)
+	appID, clientID, currentRedirects, currentPostLogout, found, err := s.dir.FindOIDCApp(ctx, orgID, projectID, spec.Name)
 	if err != nil {
 		return "", err
 	}
 	if found {
-		if !sameStringSet(currentRedirects, spec.RedirectURIs) {
+		// Converge on redirect OR post-logout drift - a stale post-logout set makes
+		// Zitadel reject the logout ("post_logout_redirect_uri invalid").
+		if !sameStringSet(currentRedirects, spec.RedirectURIs) || !sameStringSet(currentPostLogout, spec.PostLogoutURIs) {
 			if err := s.dir.UpdateOIDCApp(ctx, orgID, projectID, appID, spec); err != nil {
 				return "", err
 			}
-			s.log("oidc app redirects converged: %s: %v -> %v", spec.Name, currentRedirects, spec.RedirectURIs)
+			s.log("oidc app converged: %s: redirects %v->%v, post-logout %v->%v", spec.Name, currentRedirects, spec.RedirectURIs, currentPostLogout, spec.PostLogoutURIs)
 		} else {
 			s.log("oidc app exists: %s (%s)", spec.Name, appID)
 		}

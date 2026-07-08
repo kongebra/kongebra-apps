@@ -233,7 +233,7 @@ func (d *zitadelDirectory) EnsureUserGrant(ctx context.Context, orgID, userID, p
 	return nil
 }
 
-func (d *zitadelDirectory) FindOIDCApp(ctx context.Context, orgID, projectID, name string) (string, string, []string, bool, error) {
+func (d *zitadelDirectory) FindOIDCApp(ctx context.Context, orgID, projectID, name string) (string, string, []string, []string, bool, error) {
 	resp, err := d.api.ManagementService().ListApps(inOrg(ctx, orgID), &managementpb.ListAppsRequest{
 		ProjectId: projectID,
 		Queries: []*apppb.AppQuery{{
@@ -244,16 +244,16 @@ func (d *zitadelDirectory) FindOIDCApp(ctx context.Context, orgID, projectID, na
 		}},
 	})
 	if err != nil {
-		return "", "", nil, false, fmt.Errorf("list apps: %w", err)
+		return "", "", nil, nil, false, fmt.Errorf("list apps: %w", err)
 	}
 	for _, a := range resp.GetResult() {
 		if a.GetName() != name {
 			continue
 		}
 		oidc := a.GetOidcConfig()
-		return a.GetId(), oidc.GetClientId(), oidc.GetRedirectUris(), true, nil
+		return a.GetId(), oidc.GetClientId(), oidc.GetRedirectUris(), oidc.GetPostLogoutRedirectUris(), true, nil
 	}
-	return "", "", nil, false, nil
+	return "", "", nil, nil, false, nil
 }
 
 func (d *zitadelDirectory) CreateOIDCApp(ctx context.Context, orgID, projectID string, spec OIDCAppSpec) (string, string, error) {
