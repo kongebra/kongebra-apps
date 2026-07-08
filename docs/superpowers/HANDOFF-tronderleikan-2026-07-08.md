@@ -36,3 +36,40 @@ Context handoff for a fresh session. Covers three threads worked since the 2026-
 2. Read this file + `docs/superpowers/specs|plans/2026-07-07-tronderleikan-phase2a-*` + `kongebra-gitops/SECRETS.md`.
 3. Verify state: `kubectl -n argocd get app | grep tronder` (expect Synced/Healthy); `kubectl -n tronderleikan-prod get pods`.
 4. Pick a thread: push the doc commit (#1), ship saga (#2), or start Phase 2b (#4, the big one - brainstorm the OIDC-app provisioning first).
+
+---
+
+## UPDATE 2026-07-08 evening - Phase 2b DONE + saga fixes shipped
+
+Session outcome. Resolves OPEN items #1 (was already pushed), #2, #4 above.
+
+### saga (both shipped + verified in prod)
+- **sub-lang 429 fix** (#2): shipped first (build `eaae17d` -> digest `1d299801`). Verified: re-queued the previously-failing job 4 -> completed first attempt, `error: null`, no 429.
+- **LaTeX-in-output fix** (new, commit `6b07947`): small local model (`gemma`) emitted `$\rightarrow$` etc. that the web renderer showed raw. Added `summarize.CleanMath` (deterministic regex: LaTeX commands -> Unicode, unwrap `$...$` around single symbols; prices safe) applied to both summary + translate paths, plus a prompt guard. Shipped on top of the 429 fix; **current `saga-api-prod` = `sha256:1ef51ea2`** (contains both). Verified: translated job 4 -> clean `->` arrows, zero LaTeX.
+
+### Phase 2b frontends - LIVE dev + prod, tailnet-only
+Spec: `docs/superpowers/specs/2026-07-08-tronderleikan-phase2b-frontends-design.md`. Plan: `docs/superpowers/plans/2026-07-08-tronderleikan-phase2b-frontends.md`.
+
+Both `web` + `admin` (already-built TanStack Start OIDC public-PKCE BFFs) deployed to `tronderleikan-{dev,prod}`, tailnet-only. Login verified (player on web-dev). admin login + logout fixed (see gotchas).
+
+- **OIDC provisioning:** extended `zitadel-seed` to idempotently find-or-create two OIDC apps in the `tronderleikan` project and emit their `client_id`s (mirrors the project-grant converge pattern). Public PKCE web clients (AppType WEB, AuthMethod NONE, Code + refresh, JWT access token + role assertion). Ran locally against `auth.newb.no` with the IAM PAT.
+- **client_ids** (public, non-secret; in gitops base ConfigMaps `tronderleikan-{web,admin}-oidc`): web `380895887334900058`, admin `380895887569715546`. Same in dev + prod (one app per frontend spans both envs). Re-seeding a fresh Zitadel changes these -> update the ConfigMaps.
+- **Hosts** (single-label under `*.newb.no`, free wildcard TLS/DNS): web `leikan.newb.no` / `leikan-dev.newb.no`; admin `leikan-admin.newb.no` / `leikan-admin-dev.newb.no`. admin serves under basePath `/admin`, so it lives at `leikan-admin[-dev].newb.no/admin`.
+- **Routing:** web is the bare-host catch-all in the existing per-host IngressRoute (longest-match keeps `/api/*` ahead); admin is a SEPARATE IngressRoute/host so web can later go public while admin stays tailnet.
+- **SESSION_SECRET:** 4 out-of-band k8s Secrets `tronderleikan-{web,admin}-session` in `tronderleikan-{dev,prod}` (key `SESSION_SECRET`, 64-hex). Created by hand; mirror into 1Password + `SECRETS.md`.
+- **Manifests:** `apps/tronderleikan/base/{web,admin}-{deployment,service}.yaml` + `-oidc-config.yaml`; overlays add IngressRoutes + `WEB_BASE_URL`/`ADMIN_BASE_URL` patch. distroless nodejs22 `:nonroot`, `runAsUser 65532`, port 3000, `/healthz` (web) / `/admin/healthz` (admin) probes, writable `/tmp` emptyDir.
+
+### Phase 2b gotchas (learned the hard way)
+- **admin `ADMIN_BASE_URL` must be ORIGIN-ONLY** (`https://leikan-admin-dev.newb.no`), NOT `.../admin`. The BFF builds `redirect_uri = resolveOrigin + withBase('/auth/callback')` = origin + `/admin/auth/callback`; a `/admin` suffix on the base double-prefixed it to `/admin/admin/auth/callback` -> Zitadel "redirect_uri missing in client configuration". web's `WEB_BASE_URL` is fine (web has no basePath).
+- **admin post-logout needs the trailing slash** `.../admin/` (the app produces `resolveOrigin + withBase('/')` = origin + `/admin/`). Seed originally registered `.../admin` (no slash) -> logout "post_logout_redirect_uri invalid".
+- **seed convergence originally keyed on redirect URIs only**, so re-seeding did NOT fix the post-logout drift. Fixed: `FindOIDCApp` now also returns current post-logout, and `ensureOIDCApp` converges on redirect OR post-logout diff (commit `fb51b0d`, closes the Phase A final-review gap). Re-ran seed -> converged live.
+- **prod admin had no image digest** (auto-promoted to dev but never prod-gated) -> `ImagePullBackOff` on `:latest`. Fixed by running `tronderleikan-admin` CI + approving the prod gate (digest `48c3f08b` now in both overlays).
+
+### Remaining Phase 2b follow-ups (non-blocking)
+- **web-public** (deferred fast-follow): add `_components/expose-public` to web's overlay AND expose Zitadel's OIDC/login endpoints (currently tailnet-only). Needs the Zitadel-exposure decision (public login paths, `/console` stays tailnet, or Cloudflare Access). One line + the Zitadel change; zero rework.
+- **admin root -> /admin redirect** (cosmetic): `leikan-admin[-dev].newb.no/` (no path) 404s; only `/admin` works.
+- **Gatus** status-page annotation for the frontends (dev key on dev, plain on prod).
+- **Future OIDC provisioning** (architecture note in the spec): stays in the seed now; fold runtime tenant-provisioning into `platform`'s tenant-create flow (already talks to Zitadel via `platform/zitadel_client.go`) when multi-tenant lands - not a separate operator.
+
+### Still open from the morning handoff
+- #3 prod-gate policy (undecided). #5 demo data in LIVE Zitadel (delete if a clean prod IdP is wanted; the 3 test users still exist and are used for login verification). #6 saga minors.
