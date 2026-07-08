@@ -41,6 +41,10 @@ func main() {
 
 	log.Printf("seed complete: platform-org=%s project=%s tenant-org=%s grant=%s users=%d",
 		res.PlatformOrgID, res.ProjectID, res.TenantOrgID, res.ProjectGrantID, len(res.UserIDs))
+
+	for name, clientID := range res.ClientIDs {
+		log.Printf("CAPTURE client_id: %s = %s", name, clientID)
+	}
 }
 
 func connectWithRetry(ctx context.Context, cfg Config, attempts int, wait time.Duration) (*zitadelDirectory, error) {
