@@ -86,6 +86,7 @@ func (Module) Run(ctx context.Context, raw json.RawMessage, deps module.Deps, em
 	if err != nil {
 		return module.Result{}, err
 	}
+	summary = summarize.CleanMath(summary)
 
 	return module.Result{
 		Markdown:         fmt.Sprintf("# %s\n\n<%s>\n\n%s\n", v.Title, in.URL, summary),

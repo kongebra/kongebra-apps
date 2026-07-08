@@ -18,6 +18,7 @@ func SinglePrompt(lang, title, transcript string) string {
 	return fmt.Sprintf(`You are summarizing the transcript of a video titled %q.
 Write the summary in %s, as Markdown with: a one-paragraph overview,
 the key points as bullets, and a short list of concepts worth learning more about.
+Use plain text and standard Markdown only - never LaTeX or math notation (write arrows as ->, not \rightarrow).
 
 Transcript:
 %s`, title, langName(lang), transcript)
@@ -38,6 +39,7 @@ based on summaries of its parts, in order.
 Write in %s, as Markdown with: a one-paragraph overview,
 the key points as bullets, and a short list of concepts worth learning more about.
 Merge duplicate points across parts.
+Use plain text and standard Markdown only - never LaTeX or math notation (write arrows as ->, not \rightarrow).
 
 Part summaries:
 %s`, title, langName(lang), strings.Join(parts, "\n\n---\n\n"))

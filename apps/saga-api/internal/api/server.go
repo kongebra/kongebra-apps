@@ -177,6 +177,7 @@ func (s *server) translate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	md = summarize.CleanMath(md)
 	if err := queue.SetTranslation(r.Context(), s.pool, job.ID, req.Lang, md); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
