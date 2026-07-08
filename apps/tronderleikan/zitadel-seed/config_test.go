@@ -121,6 +121,46 @@ func TestLoadConfigDefaultsAndValidation(t *testing.T) {
 	})
 }
 
+func TestLoadConfigParsesOIDCApps(t *testing.T) {
+	cfg, err := LoadConfig(envFrom(map[string]string{
+		EnvAPIURL:              "https://auth.newb.no",
+		EnvPAT:                 "tok",
+		EnvTestPassword:        "Password1!",
+		EnvWebRedirectURIs:     "https://leikan.newb.no/auth/callback, https://leikan-dev.newb.no/auth/callback",
+		EnvWebPostLogoutURIs:   "https://leikan.newb.no/",
+		EnvAdminRedirectURIs:   "https://leikan-admin.newb.no/admin/auth/callback",
+		EnvAdminPostLogoutURIs: "https://leikan-admin.newb.no/admin",
+	}))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(cfg.OIDCApps) != 2 {
+		t.Fatalf("want 2 OIDC apps, got %d", len(cfg.OIDCApps))
+	}
+	web := cfg.OIDCApps[0]
+	if web.Name != "tronderleikan-web" || len(web.RedirectURIs) != 2 {
+		t.Fatalf("web app parsed wrong: %+v", web)
+	}
+	if web.RedirectURIs[1] != "https://leikan-dev.newb.no/auth/callback" {
+		t.Fatalf("whitespace not trimmed: %q", web.RedirectURIs[1])
+	}
+}
+
+func TestLoadConfigSkipsOIDCAppWithoutRedirects(t *testing.T) {
+	cfg, err := LoadConfig(envFrom(map[string]string{
+		EnvAPIURL:       "https://auth.newb.no",
+		EnvPAT:          "tok",
+		EnvTestPassword: "Password1!",
+		// no redirect-URI envs set
+	}))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(cfg.OIDCApps) != 0 {
+		t.Fatalf("want 0 OIDC apps when no redirect URIs set, got %d", len(cfg.OIDCApps))
+	}
+}
+
 func envFrom(m map[string]string) func(string) string {
 	return func(k string) string { return m[k] }
 }

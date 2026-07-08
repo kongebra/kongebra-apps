@@ -26,6 +26,14 @@ const (
 	EnvTenantOrg    = "SEED_TENANT_ORG_NAME"
 	EnvProjectName  = "SEED_PROJECT_NAME"
 	EnvTestPassword = "SEED_TEST_PASSWORD"
+
+	// OIDC-app redirect URIs (comma-separated). Empty -> that app is skipped
+	// (local runs that don't need cluster apps stay unaffected). SPEC §5:
+	// never hardcode URLs in code.
+	EnvWebRedirectURIs     = "SEED_WEB_REDIRECT_URIS"
+	EnvWebPostLogoutURIs   = "SEED_WEB_POST_LOGOUT_URIS"
+	EnvAdminRedirectURIs   = "SEED_ADMIN_REDIRECT_URIS"
+	EnvAdminPostLogoutURIs = "SEED_ADMIN_POST_LOGOUT_URIS"
 )
 
 // Defaults som gir mening lokalt. Ingen hemmeligheter her: testpassordet må
@@ -55,6 +63,14 @@ type UserSpec struct {
 	Roles []string
 }
 
+// OIDCAppSpec beskriver en OIDC-app som skal finnes i prosjektet. Public PKCE-
+// klient; redirect-URIene kommer fra env (begge miljøer på samme app).
+type OIDCAppSpec struct {
+	Name           string
+	RedirectURIs   []string
+	PostLogoutURIs []string
+}
+
 // Config er den ferdig-validerte konfigurasjonen seeden kjører på.
 type Config struct {
 	Target          Target
@@ -64,6 +80,7 @@ type Config struct {
 	ProjectName     string
 	TestPassword    string
 	Users           []UserSpec
+	OIDCApps        []OIDCAppSpec
 }
 
 // LoadConfig leser og validerer konfigurasjon fra miljøet.
@@ -96,6 +113,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		TestPassword:    password,
 	}
 	cfg.Users = defaultUsers()
+	cfg.OIDCApps = oidcAppsFrom(getenv)
 	return cfg, nil
 }
 
@@ -194,6 +212,40 @@ func parseTarget(rawURL string) (Target, error) {
 		}
 	}
 	return Target{Domain: u.Hostname(), Port: port, TLS: tls}, nil
+}
+
+// oidcAppsFrom bygger app-spec-ene fra env. En app med tomt redirect-sett
+// utelates (skip), så et lokalt kjør uten cluster-URLer ikke feiler.
+func oidcAppsFrom(getenv func(string) string) []OIDCAppSpec {
+	var apps []OIDCAppSpec
+	for _, a := range []struct {
+		name, redirectEnv, logoutEnv string
+	}{
+		{"tronderleikan-web", EnvWebRedirectURIs, EnvWebPostLogoutURIs},
+		{"tronderleikan-admin", EnvAdminRedirectURIs, EnvAdminPostLogoutURIs},
+	} {
+		redirects := splitCSV(getenv(a.redirectEnv))
+		if len(redirects) == 0 {
+			continue
+		}
+		apps = append(apps, OIDCAppSpec{
+			Name:           a.name,
+			RedirectURIs:   redirects,
+			PostLogoutURIs: splitCSV(getenv(a.logoutEnv)),
+		})
+	}
+	return apps
+}
+
+// splitCSV deler en komma-separert liste, trimmer whitespace, dropper tomme.
+func splitCSV(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func valueOr(v, fallback string) string {
