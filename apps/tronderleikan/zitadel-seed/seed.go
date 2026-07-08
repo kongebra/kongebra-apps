@@ -68,6 +68,13 @@ type Directory interface {
 	// projectGrantID er tom for prosjektets eier-org (plattform), satt for
 	// tenant-orgen (granted project).
 	EnsureUserGrant(ctx context.Context, orgID, userID, projectID, projectGrantID string, roleKeys []string) error
+
+	// FindOIDCApp returnerer appID, client_id og nåværende redirect-URIer, så
+	// Seeder kan konvergere redirect-settet (ikke bare eksistensen).
+	FindOIDCApp(ctx context.Context, orgID, projectID, name string) (appID, clientID string, currentRedirects []string, found bool, err error)
+	CreateOIDCApp(ctx context.Context, orgID, projectID string, spec OIDCAppSpec) (appID, clientID string, err error)
+	// UpdateOIDCApp setter redirect/post-logout-settet (brukes når det avviker).
+	UpdateOIDCApp(ctx context.Context, orgID, projectID, appID string, spec OIDCAppSpec) error
 }
 
 // Seeder kjører den idempotente provisjoneringen mot en Directory.
@@ -91,13 +98,14 @@ type Result struct {
 	TenantOrgID    string
 	ProjectGrantID string
 	UserIDs        map[string]string // e-post -> Zitadel user-id
+	ClientIDs      map[string]string // app name -> client_id
 }
 
 // Seed sikrer hele mål-tilstanden idempotent (SPEC §5, §6, §12):
 // plattform-org, project, 4 roller, test-tenant-org m/project-grant, testbrukere
 // med rolletildelinger. To kjøringer på rad gir samme sluttilstand.
 func (s *Seeder) Seed(ctx context.Context, cfg Config) (Result, error) {
-	res := Result{UserIDs: map[string]string{}}
+	res := Result{UserIDs: map[string]string{}, ClientIDs: map[string]string{}}
 
 	// 1. Plattform-org (eier prosjektet).
 	platformOrgID, err := s.ensureOrg(ctx, cfg.PlatformOrgName)
@@ -152,6 +160,16 @@ func (s *Seeder) Seed(ctx context.Context, cfg Config) (Result, error) {
 			return res, fmt.Errorf("user-grant %s: %w", u.Email, err)
 		}
 		s.log("user ensured: %s (%v)", u.Email, u.Roles)
+	}
+
+	// 7. OIDC-apper (public PKCE) for frontendene. client_id fanges i Result.
+	for _, app := range cfg.OIDCApps {
+		clientID, err := s.ensureOIDCApp(ctx, platformOrgID, projectID, app)
+		if err != nil {
+			return res, fmt.Errorf("oidc app %s: %w", app.Name, err)
+		}
+		res.ClientIDs[app.Name] = clientID
+		s.log("oidc app ensured: %s (client_id=%s)", app.Name, clientID)
 	}
 
 	return res, nil
@@ -249,4 +267,28 @@ func (s *Seeder) ensureUser(ctx context.Context, orgID string, u UserSpec, passw
 	}
 	s.log("user created: %s (%s)", u.Email, id)
 	return id, nil
+}
+
+func (s *Seeder) ensureOIDCApp(ctx context.Context, orgID, projectID string, spec OIDCAppSpec) (string, error) {
+	appID, clientID, currentRedirects, found, err := s.dir.FindOIDCApp(ctx, orgID, projectID, spec.Name)
+	if err != nil {
+		return "", err
+	}
+	if found {
+		if !sameStringSet(currentRedirects, spec.RedirectURIs) {
+			if err := s.dir.UpdateOIDCApp(ctx, orgID, projectID, appID, spec); err != nil {
+				return "", err
+			}
+			s.log("oidc app redirects converged: %s: %v -> %v", spec.Name, currentRedirects, spec.RedirectURIs)
+		} else {
+			s.log("oidc app exists: %s (%s)", spec.Name, appID)
+		}
+		return clientID, nil
+	}
+	_, clientID, err = s.dir.CreateOIDCApp(ctx, orgID, projectID, spec)
+	if err != nil {
+		return "", err
+	}
+	s.log("oidc app created: %s", spec.Name)
+	return clientID, nil
 }

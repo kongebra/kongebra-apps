@@ -232,4 +232,19 @@ func (d *zitadelDirectory) EnsureUserGrant(ctx context.Context, orgID, userID, p
 	return nil
 }
 
+func (d *zitadelDirectory) FindOIDCApp(ctx context.Context, orgID, projectID, name string) (string, string, []string, bool, error) {
+	// TODO (Task A3): Implement FindOIDCApp to search for existing OIDC apps by name.
+	return "", "", nil, false, nil
+}
+
+func (d *zitadelDirectory) CreateOIDCApp(ctx context.Context, orgID, projectID string, spec OIDCAppSpec) (string, string, error) {
+	// TODO (Task A3): Implement CreateOIDCApp to create a new public PKCE OIDC app with redirect URIs.
+	return "", "", fmt.Errorf("not implemented")
+}
+
+func (d *zitadelDirectory) UpdateOIDCApp(ctx context.Context, orgID, projectID, appID string, spec OIDCAppSpec) error {
+	// TODO (Task A3): Implement UpdateOIDCApp to update redirect URIs on an existing app.
+	return fmt.Errorf("not implemented")
+}
+
 var _ Directory = (*zitadelDirectory)(nil)

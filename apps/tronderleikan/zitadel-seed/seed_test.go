@@ -21,6 +21,9 @@ type fakeDirectory struct {
 	users        map[string]string   // orgID/email -> id
 	userGrants   map[string]bool     // orgID/userID/projectID/grantID
 	grantRoles   map[string][]string // grantID -> roleKeys (for assertions)
+	oidcApps     map[string]string   // orgID/projectID/name -> appID
+	oidcClientID map[string]string   // appID -> clientID
+	oidcRedirects map[string][]string // appID -> redirect URIs
 	createdCount map[string]int      // teller Create*-kall per type
 	seq          int
 }
@@ -29,7 +32,8 @@ func newFakeDirectory() *fakeDirectory {
 	return &fakeDirectory{
 		orgs: map[string]string{}, projects: map[string]string{}, roles: map[string]bool{},
 		grants: map[string]string{}, users: map[string]string{}, userGrants: map[string]bool{},
-		grantRoles: map[string][]string{}, createdCount: map[string]int{},
+		grantRoles: map[string][]string{}, oidcApps: map[string]string{}, oidcClientID: map[string]string{}, oidcRedirects: map[string][]string{},
+		createdCount: map[string]int{},
 	}
 }
 
@@ -126,6 +130,33 @@ func (f *fakeDirectory) EnsureUserGrant(_ context.Context, orgID, userID, projec
 		f.createdCount["userGrant"]++
 	}
 	f.userGrants[key] = true
+	return nil
+}
+
+func (f *fakeDirectory) FindOIDCApp(_ context.Context, orgID, projectID, name string) (string, string, []string, bool, error) {
+	appID, ok := f.oidcApps[orgID+"/"+projectID+"/"+name]
+	if !ok {
+		return "", "", nil, false, nil
+	}
+	return appID, f.oidcClientID[appID], f.oidcRedirects[appID], true, nil
+}
+
+func (f *fakeDirectory) CreateOIDCApp(_ context.Context, orgID, projectID string, spec OIDCAppSpec) (string, string, error) {
+	key := orgID + "/" + projectID + "/" + spec.Name
+	if _, ok := f.oidcApps[key]; ok {
+		return "", "", fmt.Errorf("NOT-IDEMPOTENT: OIDC app %q created twice", key)
+	}
+	appID := f.nextID("app")
+	f.oidcApps[key] = appID
+	f.oidcClientID[appID] = f.nextID("client") + "@tronderleikan"
+	f.oidcRedirects[appID] = spec.RedirectURIs
+	f.createdCount["oidcApp"]++
+	return appID, f.oidcClientID[appID], nil
+}
+
+func (f *fakeDirectory) UpdateOIDCApp(_ context.Context, _, _, appID string, spec OIDCAppSpec) error {
+	f.oidcRedirects[appID] = spec.RedirectURIs
+	f.createdCount["oidcUpdate"]++
 	return nil
 }
 
@@ -276,5 +307,66 @@ func TestPlatformAdminNotGrantableToTenant(t *testing.T) {
 		if !slices.Contains(tenantGrantableRoles, r) {
 			t.Fatalf("%s mangler i tenantGrantableRoles", r)
 		}
+	}
+}
+
+func TestSeedCreatesOIDCApps(t *testing.T) {
+	fake := newFakeDirectory()
+	cfg := testConfig()
+	cfg.OIDCApps = []OIDCAppSpec{
+		{Name: "tronderleikan-web", RedirectURIs: []string{"https://leikan.newb.no/auth/callback"}},
+		{Name: "tronderleikan-admin", RedirectURIs: []string{"https://leikan-admin.newb.no/admin/auth/callback"}},
+	}
+	res, err := NewSeeder(fake, nil).Seed(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if fake.createdCount["oidcApp"] != 2 {
+		t.Fatalf("want 2 OIDC apps created, got %d", fake.createdCount["oidcApp"])
+	}
+	if res.ClientIDs["tronderleikan-web"] == "" || res.ClientIDs["tronderleikan-admin"] == "" {
+		t.Fatalf("client IDs not captured: %+v", res.ClientIDs)
+	}
+}
+
+func TestSeedOIDCAppsIdempotentAndConverge(t *testing.T) {
+	fake := newFakeDirectory()
+	cfg := testConfig()
+	cfg.OIDCApps = []OIDCAppSpec{
+		{Name: "tronderleikan-web", RedirectURIs: []string{"https://leikan.newb.no/auth/callback", "https://leikan-dev.newb.no/auth/callback"}},
+	}
+	ctx := context.Background()
+
+	res1, err := NewSeeder(fake, nil).Seed(ctx, cfg)
+	if err != nil {
+		t.Fatalf("run 1: %v", err)
+	}
+	// Corrupt: drop one redirect URI so run 2 must converge.
+	appID := fake.oidcApps["org-1/project-2/tronderleikan-web"]
+	if appID == "" {
+		// find it without hardcoding ids
+		for k, v := range fake.oidcApps {
+			if len(k) > 0 {
+				appID = v
+			}
+		}
+	}
+	fake.oidcRedirects[appID] = []string{"https://leikan.newb.no/auth/callback"}
+
+	res2, err := NewSeeder(fake, nil).Seed(ctx, cfg)
+	if err != nil {
+		t.Fatalf("run 2 (idempotency broken): %v", err)
+	}
+	if fake.createdCount["oidcApp"] != 1 {
+		t.Fatalf("app re-created on run 2: count=%d", fake.createdCount["oidcApp"])
+	}
+	if fake.createdCount["oidcUpdate"] != 1 {
+		t.Fatalf("want exactly 1 converge-update, got %d", fake.createdCount["oidcUpdate"])
+	}
+	if !sameStringSet(fake.oidcRedirects[appID], cfg.OIDCApps[0].RedirectURIs) {
+		t.Fatalf("redirects did not converge: %v", fake.oidcRedirects[appID])
+	}
+	if res1.ClientIDs["tronderleikan-web"] != res2.ClientIDs["tronderleikan-web"] {
+		t.Fatalf("client_id changed between runs")
 	}
 }
