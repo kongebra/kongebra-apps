@@ -73,3 +73,22 @@ Both `web` + `admin` (already-built TanStack Start OIDC public-PKCE BFFs) deploy
 
 ### Still open from the morning handoff
 - #3 prod-gate policy (undecided). #5 demo data in LIVE Zitadel (delete if a clean prod IdP is wanted; the 3 test users still exist and are used for login verification). #6 saga minors.
+
+## UPDATE 2026-07-10 - Zitadel email (SMTP) + self-service recovery
+
+Triggered by testing tenant provisioning via the admin plane (`leikan-admin-dev.newb.no/admin`): provisioning works (creates Zitadel org + org-admin), but the org-admin could not recover a stuck login because Zitadel had NO SMTP, so "Reset Password" self-service could not deliver a code.
+
+- **SMTP configured (Resend).** `platform/zitadel/configure-smtp.sh` (kongebra-gitops) adds + activates a Resend SMTP provider on the instance via the Admin API (`smtp.resend.com:587`, TLS/STARTTLS, user `resend`, from `noreply@newb.no`, sender name "Kongebra"). Zitadel instance SMTP is runtime Admin-API state, NOT bootstrap config (instance already initialized) - the script is the reproducible record. `RESEND_API_KEY` lives in 1Password, never committed.
+- **Resend domain `newb.no`** verified via Resend's Cloudflare auto-configure (DNS records added automatically; verified in ~3 min). Region eu-west-1. Click/open tracking OFF (auth mail must not rewrite links).
+- **Self-service password reset works end-to-end** - verified: reset mail delivered from `noreply@newb.no`, code accepted, password set, org-admin logged in.
+- Org-admin is created with `ChangeRequired: true` (`platform/zitadel_client.go`) - the forced-change/init flow works; earlier "Could not create session" was just an expired login session (user stepped away).
+
+### Gotchas learned
+- **Reset codes are single-use and superseded by "Resend code".** First mail was slow (~1 min); clicking Resend invalidates the prior code. Using the OLD code -> "Code is invalid (CODE-woT0xc)". Use the newest mail's code, promptly.
+- **login-container token warnings are benign noise:** `issuer does not match: got: login-client` / `invalid token (APP-Reb32)` / `malformed encrypted value` recur ~every 5s but the requests still serve `code_0` (Zitadel warns on JWT verify, succeeds via fallback). NOT a failure - do not chase these.
+- Password-policy rejections surface as generic **"intern feil"** in the admin UI (real reason, e.g. "Password must contain lower case", only in `platform` logs). Masked-validation-error UX bug - see follow-ups.
+
+### Follow-ups (non-blocking)
+- **platform: surface Zitadel `InvalidArgument` as 400 + message**, not a catch-all 500 "intern feil" (password-policy + other validation reasons should reach the user).
+- **Zitadel email template**: the code is buried in prose ("... (Code JUKY1E) ..."). Customize the template so the code is prominent + easy to copy. Consider invite-instead-of-temp-password provisioning now that SMTP works.
+- **login container `security settings ... 404`** (v4.15 login<->core) - cosmetic, investigate later.
