@@ -22,10 +22,10 @@ const defaultTranslateModel = "gemma4:e4b"
 type server struct {
 	pool *pgxpool.Pool
 	bus  *Bus
-	llm  *llm.Client
+	llm  llm.Provider
 }
 
-func New(pool *pgxpool.Pool, bus *Bus, llmClient *llm.Client, version string) http.Handler {
+func New(pool *pgxpool.Pool, bus *Bus, llmClient llm.Provider, version string) http.Handler {
 	s := &server{pool: pool, bus: bus, llm: llmClient}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {

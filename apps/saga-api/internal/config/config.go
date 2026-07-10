@@ -7,22 +7,26 @@ import (
 )
 
 type Config struct {
-	Port         string
-	DatabaseURL  string // required, no default
-	OllamaURL    string
-	YtdlpPath    string
-	WorkDir      string // writable dir for yt-dlp temp files (emptyDir in k8s)
-	ChunkTimeout time.Duration
+	Port           string
+	DatabaseURL    string // required, no default
+	OllamaURL      string
+	OllamaCloudURL string
+	OllamaAPIKey   string // no default; empty = Ollama Cloud disabled
+	YtdlpPath      string
+	WorkDir        string // writable dir for yt-dlp temp files (emptyDir in k8s)
+	ChunkTimeout   time.Duration
 }
 
 func Load() Config {
 	return Config{
-		Port:         getenv("PORT", "8080"),
-		DatabaseURL:  os.Getenv("DATABASE_URL"),
-		OllamaURL:    getenv("OLLAMA_URL", "http://100.125.242.93:11434"),
-		YtdlpPath:    getenv("YTDLP_PATH", "yt-dlp"),
-		WorkDir:      getenv("WORK_DIR", os.TempDir()),
-		ChunkTimeout: getduration("CHUNK_TIMEOUT", 15*time.Minute),
+		Port:           getenv("PORT", "8080"),
+		DatabaseURL:    os.Getenv("DATABASE_URL"),
+		OllamaURL:      getenv("OLLAMA_URL", "http://100.125.242.93:11434"),
+		OllamaCloudURL: getenv("OLLAMA_CLOUD_URL", "https://ollama.com"),
+		OllamaAPIKey:   os.Getenv("OLLAMA_API_KEY"),
+		YtdlpPath:      getenv("YTDLP_PATH", "yt-dlp"),
+		WorkDir:        getenv("WORK_DIR", os.TempDir()),
+		ChunkTimeout:   getduration("CHUNK_TIMEOUT", 15*time.Minute),
 	}
 }
 

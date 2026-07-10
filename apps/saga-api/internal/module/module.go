@@ -24,7 +24,7 @@ type Event struct {
 }
 
 type Deps struct {
-	LLM          *llm.Client
+	LLM          llm.Provider
 	Fetcher      ytdlp.Fetcher
 	ChunkTimeout time.Duration // per-LLM-call budget, not per-job
 }

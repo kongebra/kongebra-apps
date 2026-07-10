@@ -9,6 +9,8 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://x")
 	t.Setenv("PORT", "")
 	t.Setenv("OLLAMA_URL", "")
+	t.Setenv("OLLAMA_CLOUD_URL", "")
+	t.Setenv("OLLAMA_API_KEY", "")
 	cfg := Load()
 	if cfg.Port != "8080" {
 		t.Errorf("Port = %q, want 8080", cfg.Port)
@@ -21,6 +23,25 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.YtdlpPath != "yt-dlp" {
 		t.Errorf("YtdlpPath = %q", cfg.YtdlpPath)
+	}
+	if cfg.OllamaCloudURL != "https://ollama.com" {
+		t.Errorf("OllamaCloudURL = %q", cfg.OllamaCloudURL)
+	}
+	if cfg.OllamaAPIKey != "" {
+		t.Errorf("OllamaAPIKey = %q, want empty (cloud disabled by default)", cfg.OllamaAPIKey)
+	}
+}
+
+func TestLoadCloudOverrides(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://x")
+	t.Setenv("OLLAMA_CLOUD_URL", "https://example.test")
+	t.Setenv("OLLAMA_API_KEY", "sk-123")
+	cfg := Load()
+	if cfg.OllamaCloudURL != "https://example.test" {
+		t.Errorf("OllamaCloudURL = %q", cfg.OllamaCloudURL)
+	}
+	if cfg.OllamaAPIKey != "sk-123" {
+		t.Errorf("OllamaAPIKey = %q", cfg.OllamaAPIKey)
 	}
 }
 

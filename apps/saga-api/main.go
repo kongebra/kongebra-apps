@@ -1,5 +1,6 @@
 // saga-api is the backend for saga.kongebra.no: a Postgres-backed job queue
-// plus modules that summarize content with the local Ollama instance.
+// plus modules that summarize content with Ollama - the local GPU by default,
+// or Ollama Cloud when the model is a cloud tag and an API key is configured.
 // Design: docs/superpowers/specs/2026-07-04-saga-platform-design.md.
 package main
 
@@ -44,8 +45,16 @@ func main() {
 
 	module.Register(ytsummary.Module{})
 
+	// Local GPU always; Ollama Cloud only when an API key is configured.
+	// The Router picks per model: cloud tags (":cloud"/"-cloud") go to cloud.
+	var cloud llm.Provider
+	if cfg.OllamaAPIKey != "" {
+		cloud = llm.NewCloud(cfg.OllamaCloudURL, cfg.OllamaAPIKey)
+	}
+	router := llm.NewRouter(llm.New(cfg.OllamaURL), cloud)
+
 	deps := module.Deps{
-		LLM:          llm.New(cfg.OllamaURL),
+		LLM:          router,
 		Fetcher:      ytdlp.Exec{Bin: cfg.YtdlpPath, WorkDir: cfg.WorkDir},
 		ChunkTimeout: cfg.ChunkTimeout,
 	}

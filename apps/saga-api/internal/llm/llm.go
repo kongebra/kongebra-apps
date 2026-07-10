@@ -1,7 +1,12 @@
-// Package llm is the single chokepoint for all Ollama traffic. One GPU, one
-// model loaded: the n=1 semaphore serializes calls app-wide, and callers
-// release it between map-reduce chunks, which is what lets a future
-// interactive module cut in line at chunk boundaries.
+// Package llm speaks OpenAI-compatible chat streaming to an Ollama backend.
+// Both the local GPU and Ollama Cloud expose the same wire shape, so one
+// Client serves both: they differ only by base URL, an optional bearer key,
+// and whether calls are serialized. The local box is one GPU, one model
+// loaded, so its Client carries an n=1 semaphore that serializes calls
+// app-wide; callers release it between map-reduce chunks, which is what lets
+// a future interactive module cut in line at chunk boundaries. Cloud calls
+// take no semaphore (cloud runs many at once). A Router (router.go) picks the
+// Client per model.
 // ponytail: hand-rolled OpenAI-compat client (~80 lines) instead of an SDK;
 // swap for an SDK if we ever need tools/images/logprobs.
 package llm
@@ -19,10 +24,13 @@ import (
 
 type Client struct {
 	baseURL string
+	bearer  string // Authorization: Bearer <bearer>; empty = no auth (local)
 	httpc   *http.Client
-	sem     chan struct{}
+	sem     chan struct{} // nil = no app-wide serialization (cloud)
 }
 
+// New builds a client for the local single-GPU Ollama: no auth header, and an
+// n=1 semaphore that serializes every call app-wide.
 func New(baseURL string) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
@@ -31,14 +39,27 @@ func New(baseURL string) *Client {
 	}
 }
 
+// NewCloud builds a client for Ollama Cloud: bearer auth, and NO semaphore -
+// cloud runs many calls concurrently, so serializing it would needlessly block
+// cloud work behind a local job (the whole point of adding cloud).
+func NewCloud(baseURL, apiKey string) *Client {
+	return &Client{
+		baseURL: strings.TrimRight(baseURL, "/"),
+		bearer:  apiKey,
+		httpc:   &http.Client{},
+	}
+}
+
 // Chat sends one user prompt, streams tokens to onToken (nil ok), returns
 // the assembled response. Cancellation/timeout via ctx.
 func (c *Client) Chat(ctx context.Context, model, prompt string, onToken func(string)) (string, error) {
-	select {
-	case c.sem <- struct{}{}:
-		defer func() { <-c.sem }()
-	case <-ctx.Done():
-		return "", ctx.Err()
+	if c.sem != nil {
+		select {
+		case c.sem <- struct{}{}:
+			defer func() { <-c.sem }()
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
 	}
 
 	body, err := json.Marshal(map[string]any{
@@ -57,6 +78,9 @@ func (c *Client) Chat(ctx context.Context, model, prompt string, onToken func(st
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if c.bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+c.bearer)
+	}
 
 	resp, err := c.httpc.Do(req)
 	if err != nil {
