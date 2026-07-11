@@ -48,7 +48,7 @@ func InsertRun(ctx context.Context, tx pgx.Tx, r Run) error {
 			summarize_ms, translate_ms, total_ms, summarize_cost_usd, translate_cost_usd,
 			chunk_count, result_markdown, translated_markdown, eval_set_tag, trace_id)
 		VALUES ($1,$2,NULLIF($3,''),$4,NULLIF($5,''),$6,$7,$8,$9,NULLIF($10,''),$11,
-			$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,NULLIF($25,''),NULLIF($26,''),NULLIF($27,''))`,
+			$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,NULLIF($24,''),NULLIF($25,''),NULLIF($26,''),NULLIF($27,''))`,
 		r.JobID, r.RunGroupID, r.TranscriptSha256, r.Model, r.ModelBuild,
 		r.Tier, r.PromptVersion, r.TargetLang, r.SummarizeLang, r.TranslateModel, r.Reproducible,
 		r.Temperature, r.Seed, r.NumCtx, r.InputTokens, r.OutputTokens, r.GenTokS,

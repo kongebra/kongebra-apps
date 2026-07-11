@@ -66,4 +66,18 @@ func TestInsertRun(t *testing.T) {
 		t.Fatalf("round-trip mismatch: got model=%q output_tokens=%d summarize_cost_usd=%v",
 			model, outputTokens, summarizeCostUSD)
 	}
+
+	// r.ResultMarkdown was left unset (empty string) above, so it must be
+	// stored as SQL NULL, not the empty string, matching every other
+	// nullable text column's NULLIF($n,'') behavior.
+	var resultMarkdown *string
+	err = pool.QueryRow(ctx,
+		`SELECT result_markdown FROM job_runs WHERE job_id = $1`, jobID,
+	).Scan(&resultMarkdown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resultMarkdown != nil {
+		t.Fatalf("expected result_markdown to be NULL for empty ResultMarkdown, got %q", *resultMarkdown)
+	}
 }
