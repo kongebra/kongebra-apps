@@ -1,0 +1,33 @@
+CREATE TABLE job_runs (
+    id                  bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    job_id              bigint NOT NULL REFERENCES jobs(id),
+    run_group_id        text NOT NULL DEFAULT '',
+    transcript_sha256   text REFERENCES transcripts(sha256),
+    model               text NOT NULL,
+    model_build         text,
+    tier                text NOT NULL,
+    prompt_version      text NOT NULL,
+    target_lang         text NOT NULL,
+    summarize_lang      text NOT NULL,
+    translate_model     text,
+    reproducible        boolean NOT NULL DEFAULT false,
+    temperature         double precision NOT NULL DEFAULT 0,
+    seed                int NOT NULL DEFAULT 0,
+    num_ctx             int NOT NULL DEFAULT 0,
+    input_tokens        int NOT NULL DEFAULT 0,
+    output_tokens       int NOT NULL DEFAULT 0,
+    gen_tok_s           double precision NOT NULL DEFAULT 0,
+    summarize_ms        int NOT NULL DEFAULT 0,
+    translate_ms        int NOT NULL DEFAULT 0,
+    total_ms            int NOT NULL DEFAULT 0,
+    summarize_cost_usd  double precision NOT NULL DEFAULT 0,
+    translate_cost_usd  double precision NOT NULL DEFAULT 0,
+    chunk_count         int NOT NULL DEFAULT 0,
+    result_markdown     text,
+    translated_markdown text,
+    eval_set_tag        text,
+    trace_id            text,
+    created_at          timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX job_runs_job_idx ON job_runs (job_id);

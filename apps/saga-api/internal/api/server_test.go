@@ -49,7 +49,7 @@ func testServerWithLLM(t *testing.T, llmClient *llm.Client) (*httptest.Server, *
 	if err := db.Migrate(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `TRUNCATE jobs RESTART IDENTITY`); err != nil {
+	if _, err := pool.Exec(ctx, `TRUNCATE jobs RESTART IDENTITY CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 	module.Register(echoModule{})

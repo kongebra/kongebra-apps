@@ -48,7 +48,7 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	if err := db.Migrate(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `TRUNCATE jobs RESTART IDENTITY`); err != nil {
+	if _, err := pool.Exec(ctx, `TRUNCATE jobs RESTART IDENTITY CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 	return pool
