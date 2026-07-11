@@ -34,13 +34,14 @@ func (hangingFetcher) Fetch(ctx context.Context, url, lang string) (ytdlp.Video,
 	return ytdlp.Video{}, ctx.Err()
 }
 
-// fakeLLM answers every chat with a canned string.
+// fakeLLM answers every chat with a canned string, in ollama-native NDJSON
+// /api/chat format.
 func fakeLLM(t *testing.T, reply string) *llm.Client {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%q}}]}\n\n", reply)
-		fmt.Fprint(w, "data: [DONE]\n\n")
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		fmt.Fprintf(w, "{\"message\":{\"content\":%q}}\n", reply)
+		fmt.Fprint(w, "{\"done\":true}\n")
 	}))
 	t.Cleanup(srv.Close)
 	return llm.New(srv.URL)
