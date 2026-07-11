@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Run is one row in job_runs: a single successful model execution of a job,
@@ -55,4 +56,25 @@ func InsertRun(ctx context.Context, tx pgx.Tx, r Run) error {
 		r.SummarizeMs, r.TranslateMs, r.TotalMs, r.SummarizeCostUSD, r.TranslateCostUSD,
 		r.ChunkCount, r.ResultMarkdown, r.TranslatedMarkdown, r.EvalSetTag, r.TraceID)
 	return err
+}
+
+// LatestRunTranscript returns the transcript_sha256 recorded by a job's most
+// recent job_runs row - the fingerprint a replay reuses so both runs
+// summarize byte-identical input. Returns "" (not an error) when the job has
+// no runs yet, or its latest run recorded no transcript.
+func LatestRunTranscript(ctx context.Context, pool *pgxpool.Pool, jobID int64) (string, error) {
+	var sha *string
+	err := pool.QueryRow(ctx,
+		`SELECT transcript_sha256 FROM job_runs WHERE job_id = $1 ORDER BY id DESC LIMIT 1`,
+		jobID).Scan(&sha)
+	if err == pgx.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if sha == nil {
+		return "", nil
+	}
+	return *sha, nil
 }

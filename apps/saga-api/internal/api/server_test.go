@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"saga-api/internal/db"
 	"saga-api/internal/llm"
 	"saga-api/internal/module"
+	"saga-api/internal/store"
 )
 
 type echoModule struct{}
@@ -257,5 +259,102 @@ func TestTranslateJob(t *testing.T) {
 	md, _ := job["translated_markdown"].(string)
 	if !strings.Contains(md, "Tittel") {
 		t.Errorf("translated_markdown not persisted: %v", job["translated_markdown"])
+	}
+}
+
+// TestRerunJob seeds a done job that already has a recorded run (transcript +
+// job_runs row), as a real job reaches after a worker completes it, then
+// replays it on a different model. The new job's input must carry the same
+// transcript_sha as the original run so the module skips the yt-dlp fetch -
+// that is what makes an A/B between models fair (byte-identical input).
+func TestRerunJob(t *testing.T) {
+	srv, pool, _ := testServer(t)
+	ctx := context.Background()
+
+	transcriptText := "hello world, this is the original fetched transcript"
+	sha := store.Sha256(transcriptText)
+	if err := store.SaveTranscript(ctx, pool, store.Transcript{Sha256: sha, Text: transcriptText}); err != nil {
+		t.Fatal(err)
+	}
+
+	var jobID int64
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO jobs (module, input, status, result_markdown) VALUES ($1, $2, 'done', $3) RETURNING id`,
+		"test-echo", []byte(`{"url":"https://youtu.be/abc123","lang":"en","model":"qwen3.5:2b"}`), "# Title\n\n- point",
+	).Scan(&jobID); err != nil {
+		t.Fatal(err)
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.InsertRun(ctx, tx, store.Run{
+		JobID:            jobID,
+		TranscriptSha256: sha,
+		Model:            "qwen3.5:2b",
+		Tier:             "local",
+		PromptVersion:    "v1",
+		TargetLang:       "en",
+		SummarizeLang:    "en",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Post(fmt.Sprintf("%s/api/jobs/%d/rerun", srv.URL, jobID),
+		"application/json", strings.NewReader(`{"model":"kimi-k2.6:cloud"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status %d, want 201", resp.StatusCode)
+	}
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	json.NewDecoder(resp.Body).Decode(&created)
+	if created.ID == 0 || created.ID == jobID {
+		t.Fatalf("expected a new job id, got %d (original %d)", created.ID, jobID)
+	}
+
+	var newInput []byte
+	if err := pool.QueryRow(ctx, `SELECT input FROM jobs WHERE id = $1`, created.ID).Scan(&newInput); err != nil {
+		t.Fatal(err)
+	}
+	var in struct {
+		URL           string `json:"url"`
+		Lang          string `json:"lang"`
+		Model         string `json:"model"`
+		TranscriptSha string `json:"transcript_sha"`
+		RunGroup      string `json:"run_group"`
+	}
+	if err := json.Unmarshal(newInput, &in); err != nil {
+		t.Fatal(err)
+	}
+	if in.URL != "https://youtu.be/abc123" {
+		t.Errorf("url = %q, want original url carried over", in.URL)
+	}
+	if in.Model != "kimi-k2.6:cloud" {
+		t.Errorf("model = %q, want the new model", in.Model)
+	}
+	if in.TranscriptSha != sha {
+		t.Errorf("transcript_sha = %q, want %q (fetch would not be skipped)", in.TranscriptSha, sha)
+	}
+	if in.RunGroup != strconv.FormatInt(jobID, 10) {
+		t.Errorf("run_group = %q, want %d", in.RunGroup, jobID)
+	}
+
+	// 404 on an unknown job.
+	r404, err := http.Post(srv.URL+"/api/jobs/999999/rerun", "application/json", strings.NewReader(`{"model":"kimi-k2.6:cloud"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r404.Body.Close()
+	if r404.StatusCode != http.StatusNotFound {
+		t.Fatalf("status %d, want 404", r404.StatusCode)
 	}
 }

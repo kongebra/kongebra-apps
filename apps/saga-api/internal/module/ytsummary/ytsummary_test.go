@@ -13,6 +13,7 @@ import (
 
 	"saga-api/internal/llm"
 	"saga-api/internal/module"
+	"saga-api/internal/store"
 	"saga-api/internal/ytdlp"
 )
 
@@ -156,6 +157,64 @@ func TestRunMetrics(t *testing.T) {
 	}
 	if res.Transcript.Sha256 == "" {
 		t.Error("Transcript.Sha256 is empty, want a content hash")
+	}
+}
+
+// poisonFetcher fails the test if Fetch is ever called - used to prove a
+// replay (transcript_sha set) never re-fetches.
+type poisonFetcher struct{ t *testing.T }
+
+func (p poisonFetcher) Fetch(ctx context.Context, url, lang string) (ytdlp.Video, error) {
+	p.t.Fatal("Fetch called on a replay - transcript_sha should have skipped it")
+	return ytdlp.Video{}, nil
+}
+
+func TestRunReplayReusesStoredTranscriptSkipsFetch(t *testing.T) {
+	const text = "the original transcript text"
+	sha := store.Sha256(text)
+	rec := &recordingLLM{reply: "the summary"}
+	d := module.Deps{
+		LLM:     rec,
+		Fetcher: poisonFetcher{t: t},
+		Transcripts: func(ctx context.Context, s string) (*store.Transcript, error) {
+			if s != sha {
+				t.Fatalf("Transcripts called with %q, want %q", s, sha)
+			}
+			return &store.Transcript{Sha256: sha, Text: text}, nil
+		},
+		ChunkTimeout: time.Minute,
+	}
+
+	res, err := Module{}.Run(context.Background(),
+		json.RawMessage(fmt.Sprintf(`{"url":"u","model":"m","transcript_sha":%q,"run_group":"42"}`, sha)),
+		d, func(module.Event) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Transcript.Sha256 != sha {
+		t.Errorf("Transcript.Sha256 = %q, want %q (same text -> same hash)", res.Transcript.Sha256, sha)
+	}
+	if res.Run.RunGroupID != "42" {
+		t.Errorf("Run.RunGroupID = %q, want 42", res.Run.RunGroupID)
+	}
+	if len(rec.calls) == 0 || !strings.Contains(rec.calls[0].prompt, text) {
+		t.Errorf("summarize prompt did not carry the reused transcript text: %+v", rec.calls)
+	}
+}
+
+func TestRunReplayMissingTranscriptErrors(t *testing.T) {
+	d := module.Deps{
+		LLM:     &recordingLLM{reply: "x"},
+		Fetcher: poisonFetcher{t: t},
+		Transcripts: func(ctx context.Context, s string) (*store.Transcript, error) {
+			return nil, nil
+		},
+		ChunkTimeout: time.Minute,
+	}
+	_, err := Module{}.Run(context.Background(),
+		json.RawMessage(`{"url":"u","transcript_sha":"deadbeef"}`), d, func(module.Event) {})
+	if err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("err = %v, want a not-found error", err)
 	}
 }
 

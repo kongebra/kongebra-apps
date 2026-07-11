@@ -13,6 +13,7 @@ import (
 	"saga-api/internal/llm"
 	"saga-api/internal/module"
 	"saga-api/internal/queue"
+	"saga-api/internal/store"
 	"saga-api/internal/summarize"
 )
 
@@ -36,6 +37,7 @@ func New(pool *pgxpool.Pool, bus *Bus, llmClient llm.Provider, version string) h
 	mux.HandleFunc("GET /api/jobs", s.listJobs)
 	mux.HandleFunc("GET /api/jobs/{id}", s.getJob)
 	mux.HandleFunc("POST /api/jobs/{id}/retry", s.retryJob)
+	mux.HandleFunc("POST /api/jobs/{id}/rerun", s.rerunJob)
 	mux.HandleFunc("POST /api/jobs/{id}/translate", s.translate)
 	mux.HandleFunc("GET /api/events", s.events)
 	mux.HandleFunc("GET /models", func(w http.ResponseWriter, _ *http.Request) {
@@ -160,6 +162,62 @@ func (s *server) retryJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// rerunJob replays a job on a different model, reusing the transcript its
+// most recent run recorded (instead of re-fetching), so a fair A/B between
+// models sees byte-identical input. The replay's job_runs row carries
+// run_group_id = the original job's id, so the eval store can group them.
+func (s *server) rerunJob(w http.ResponseWriter, r *http.Request) {
+	job := s.jobFromPath(w, r)
+	if job == nil {
+		return
+	}
+	var req struct {
+		Model string `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Model == "" {
+		http.Error(w, "model required", http.StatusBadRequest)
+		return
+	}
+	sha, err := store.LatestRunTranscript(r.Context(), s.pool, job.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if sha == "" {
+		http.Error(w, "job has no recorded transcript to replay", http.StatusConflict)
+		return
+	}
+	var orig struct {
+		URL  string `json:"url"`
+		Lang string `json:"lang"`
+	}
+	if err := json.Unmarshal(job.Input, &orig); err != nil {
+		http.Error(w, "cannot parse original job input", http.StatusInternalServerError)
+		return
+	}
+	newInput, err := json.Marshal(map[string]string{
+		"url":            orig.URL,
+		"lang":           orig.Lang,
+		"model":          req.Model,
+		"transcript_sha": sha,
+		"run_group":      strconv.FormatInt(job.ID, 10),
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	tier := "local"
+	if m, ok := catalog.Get(req.Model); ok {
+		tier = m.Tier
+	}
+	id, err := queue.Enqueue(r.Context(), s.pool, job.Module, newInput, tier)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]int64{"id": id})
 }
 
 // translate runs a done job's summary through the LLM into the target language,

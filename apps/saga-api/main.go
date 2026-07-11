@@ -19,6 +19,7 @@ import (
 	"saga-api/internal/llm"
 	"saga-api/internal/module"
 	"saga-api/internal/module/ytsummary"
+	"saga-api/internal/store"
 	"saga-api/internal/worker"
 	"saga-api/internal/ytdlp"
 )
@@ -64,6 +65,9 @@ func main() {
 		Fetcher:        ytdlp.Exec{Bin: cfg.YtdlpPath, WorkDir: cfg.WorkDir},
 		ChunkTimeout:   cfg.ChunkTimeout,
 		TranslateModel: cfg.TranslateModel,
+		Transcripts: func(ctx context.Context, sha string) (*store.Transcript, error) {
+			return store.GetTranscript(ctx, pool, sha)
+		},
 	}
 	bus := api.NewBus()
 	go worker.Run(ctx, pool, deps, bus, cfg.SAGACloudConcurrency)

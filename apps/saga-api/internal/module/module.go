@@ -29,6 +29,10 @@ type Deps struct {
 	Fetcher        ytdlp.Fetcher
 	ChunkTimeout   time.Duration // per-LLM-call budget, not per-job
 	TranslateModel string        // pinned cloud (or local fallback) model for "no" translate pass
+	// Transcripts loads a stored transcript by its content-addressed sha256.
+	// A replay job carries transcript_sha in its input and uses this instead
+	// of Fetcher, so both runs being A/B'd see byte-identical input.
+	Transcripts func(ctx context.Context, sha string) (*store.Transcript, error)
 }
 
 // Result is what a module produces on success: the rendered Markdown plus

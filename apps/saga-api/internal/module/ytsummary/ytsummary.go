@@ -17,6 +17,7 @@ import (
 	"saga-api/internal/module"
 	"saga-api/internal/store"
 	"saga-api/internal/summarize"
+	"saga-api/internal/ytdlp"
 )
 
 const (
@@ -35,6 +36,13 @@ type input struct {
 	URL   string `json:"url"`
 	Lang  string `json:"lang"`
 	Model string `json:"model"`
+	// TranscriptSha, when set, is a replay: skip Fetcher entirely and load
+	// this exact stored transcript, so the two runs being compared see
+	// byte-identical input instead of a fresh (possibly-drifted) fetch.
+	TranscriptSha string `json:"transcript_sha,omitempty"`
+	// RunGroup ties a replay's job_runs row back to the original job it
+	// replays, so the eval store can group A/B runs together.
+	RunGroup string `json:"run_group,omitempty"`
 }
 
 type Module struct{}
@@ -68,11 +76,27 @@ func (Module) Run(ctx context.Context, raw json.RawMessage, deps module.Deps, em
 	}
 
 	emit(module.Event{Stage: "fetching"})
-	fetchCtx, cancel := context.WithTimeout(ctx, deps.ChunkTimeout)
-	v, err := deps.Fetcher.Fetch(fetchCtx, in.URL, in.Lang)
-	cancel()
-	if err != nil {
-		return module.Result{}, err
+	var v ytdlp.Video
+	var err error
+	if in.TranscriptSha != "" {
+		// Replay: reuse the exact transcript the original run recorded
+		// instead of re-fetching. Title is left blank - refetching metadata
+		// just to get it back would defeat the point of skipping the fetch.
+		tr, terr := deps.Transcripts(ctx, in.TranscriptSha)
+		if terr != nil {
+			return module.Result{}, fmt.Errorf("load replay transcript %s: %w", in.TranscriptSha, terr)
+		}
+		if tr == nil {
+			return module.Result{}, fmt.Errorf("replay transcript %s not found", in.TranscriptSha)
+		}
+		v = ytdlp.Video{Transcript: tr.Text}
+	} else {
+		fetchCtx, cancel := context.WithTimeout(ctx, deps.ChunkTimeout)
+		v, err = deps.Fetcher.Fetch(fetchCtx, in.URL, in.Lang)
+		cancel()
+		if err != nil {
+			return module.Result{}, err
+		}
 	}
 
 	// Accumulated across every summarize-stage LLM call (single-pass = 1 call;
@@ -123,6 +147,7 @@ func (Module) Run(ctx context.Context, raw json.RawMessage, deps module.Deps, em
 	summary = summarize.CleanMath(summary)
 
 	run := store.Run{
+		RunGroupID:     in.RunGroup,
 		Model:          in.Model,
 		SummarizeLang:  summarizeLang,
 		TargetLang:     targetLang,
