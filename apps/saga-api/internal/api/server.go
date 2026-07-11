@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"saga-api/internal/catalog"
 	"saga-api/internal/llm"
 	"saga-api/internal/module"
 	"saga-api/internal/queue"
@@ -37,6 +38,9 @@ func New(pool *pgxpool.Pool, bus *Bus, llmClient llm.Provider, version string) h
 	mux.HandleFunc("POST /api/jobs/{id}/retry", s.retryJob)
 	mux.HandleFunc("POST /api/jobs/{id}/translate", s.translate)
 	mux.HandleFunc("GET /api/events", s.events)
+	mux.HandleFunc("GET /models", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"models": catalog.All()})
+	})
 	return mux
 }
 

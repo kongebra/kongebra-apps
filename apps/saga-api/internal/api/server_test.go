@@ -166,6 +166,37 @@ func TestEventsStreamSnapshotThenLive(t *testing.T) {
 	}
 }
 
+func TestGetModels(t *testing.T) {
+	srv, _, _ := testServer(t)
+	resp, err := http.Get(srv.URL + "/models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d, want 200", resp.StatusCode)
+	}
+	var out struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Models) == 0 {
+		t.Fatal("models array is empty")
+	}
+	found := false
+	for _, m := range out.Models {
+		if m["id"] == "qwen3.5:2b" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("qwen3.5:2b not found in models: %+v", out.Models)
+	}
+}
+
 func TestTranslateJob(t *testing.T) {
 	srv, pool, _ := testServerWithLLM(t, fakeLLM(t, "# Tittel\n\n- punkt"))
 	ctx := context.Background()
