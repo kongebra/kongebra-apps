@@ -34,12 +34,12 @@ func TestChatStreamsAndAssembles(t *testing.T) {
 	defer srv.Close()
 	c := New(srv.URL)
 	var tokens []string
-	got, err := c.Chat(context.Background(), "m", "p", func(tok string) { tokens = append(tokens, tok) })
+	got, err := c.Chat(context.Background(), "m", "p", ChatOptions{}, func(tok string) { tokens = append(tokens, tok) })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "hello" {
-		t.Errorf("got %q", got)
+	if got.Text != "hello" {
+		t.Errorf("got %q", got.Text)
 	}
 	if strings.Join(tokens, "") != "hello" {
 		t.Errorf("tokens %v", tokens)
@@ -54,7 +54,7 @@ func TestChatSerializesConcurrentCalls(t *testing.T) {
 	errs := make(chan error, 4)
 	for i := 0; i < 4; i++ {
 		go func() {
-			_, err := c.Chat(context.Background(), "m", "p", nil)
+			_, err := c.Chat(context.Background(), "m", "p", ChatOptions{}, nil)
 			errs <- err
 		}()
 	}
@@ -90,7 +90,7 @@ func TestCloudSendsBearerAndDoesNotSerialize(t *testing.T) {
 	errs := make(chan error, 3)
 	for i := 0; i < 3; i++ {
 		go func() {
-			_, err := c.Chat(context.Background(), "gpt-oss:120b-cloud", "p", nil)
+			_, err := c.Chat(context.Background(), "gpt-oss:120b-cloud", "p", ChatOptions{}, nil)
 			errs <- err
 		}()
 	}
@@ -115,7 +115,7 @@ func TestLocalSendsNoAuthHeader(t *testing.T) {
 		fmt.Fprint(w, "data: [DONE]\n\n")
 	}))
 	defer srv.Close()
-	if _, err := New(srv.URL).Chat(context.Background(), "m", "p", nil); err != nil {
+	if _, err := New(srv.URL).Chat(context.Background(), "m", "p", ChatOptions{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if gotAuth != "" {
@@ -129,7 +129,7 @@ func TestChatErrorsOnNon200(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := New(srv.URL)
-	_, err := c.Chat(context.Background(), "m", "p", nil)
+	_, err := c.Chat(context.Background(), "m", "p", ChatOptions{}, nil)
 	if err == nil || !strings.Contains(err.Error(), "model not found") {
 		t.Fatalf("err = %v", err)
 	}

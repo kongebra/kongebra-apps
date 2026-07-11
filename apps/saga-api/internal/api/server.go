@@ -172,12 +172,12 @@ func (s *server) translate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"translated_markdown": *job.TranslatedMarkdown})
 		return
 	}
-	md, err := s.llm.Chat(r.Context(), defaultTranslateModel, summarize.TranslatePrompt(req.Lang, *job.ResultMarkdown), nil)
+	res, err := s.llm.Chat(r.Context(), defaultTranslateModel, summarize.TranslatePrompt(req.Lang, *job.ResultMarkdown), llm.ChatOptions{Temperature: 0.2}, nil)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	md = summarize.CleanMath(md)
+	md := summarize.CleanMath(res.Text)
 	if err := queue.SetTranslation(r.Context(), s.pool, job.ID, req.Lang, md); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

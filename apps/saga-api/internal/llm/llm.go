@@ -52,13 +52,16 @@ func NewCloud(baseURL, apiKey string) *Client {
 
 // Chat sends one user prompt, streams tokens to onToken (nil ok), returns
 // the assembled response. Cancellation/timeout via ctx.
-func (c *Client) Chat(ctx context.Context, model, prompt string, onToken func(string)) (string, error) {
+// ponytail: opts is unused and metrics are always zero - Task 2 wires
+// Temperature/Seed/Think/NumCtx into the request body and populates
+// ChatResult's token/duration fields from the backend's response.
+func (c *Client) Chat(ctx context.Context, model, prompt string, _ ChatOptions, onToken func(string)) (ChatResult, error) {
 	if c.sem != nil {
 		select {
 		case c.sem <- struct{}{}:
 			defer func() { <-c.sem }()
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return ChatResult{}, ctx.Err()
 		}
 	}
 
@@ -70,12 +73,12 @@ func (c *Client) Chat(ctx context.Context, model, prompt string, onToken func(st
 		},
 	})
 	if err != nil {
-		return "", err
+		return ChatResult{}, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.baseURL+"/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return ChatResult{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if c.bearer != "" {
@@ -84,12 +87,12 @@ func (c *Client) Chat(ctx context.Context, model, prompt string, onToken func(st
 
 	resp, err := c.httpc.Do(req)
 	if err != nil {
-		return "", err
+		return ChatResult{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", fmt.Errorf("ollama: %s: %s", resp.Status, strings.TrimSpace(string(b)))
+		return ChatResult{}, fmt.Errorf("ollama: %s: %s", resp.Status, strings.TrimSpace(string(b)))
 	}
 
 	var sb strings.Builder
@@ -122,5 +125,5 @@ func (c *Client) Chat(ctx context.Context, model, prompt string, onToken func(st
 			}
 		}
 	}
-	return sb.String(), sc.Err()
+	return ChatResult{Text: sb.String()}, sc.Err()
 }

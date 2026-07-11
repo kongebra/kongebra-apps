@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"strings"
 
+	"saga-api/internal/llm"
 	"saga-api/internal/module"
 	"saga-api/internal/summarize"
 )
@@ -59,7 +60,8 @@ func (Module) Run(ctx context.Context, raw json.RawMessage, deps module.Deps, em
 	chat := func(prompt string, onToken func(string)) (string, error) {
 		callCtx, cancel := context.WithTimeout(ctx, deps.ChunkTimeout)
 		defer cancel()
-		return deps.LLM.Chat(callCtx, in.Model, prompt, onToken)
+		res, err := deps.LLM.Chat(callCtx, in.Model, prompt, llm.ChatOptions{Temperature: 0.2}, onToken)
+		return res.Text, err
 	}
 	streamToken := func(tok string) {
 		emit(module.Event{Stage: "summarizing", Token: tok})

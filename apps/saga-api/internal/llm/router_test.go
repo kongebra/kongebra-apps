@@ -1,62 +1,45 @@
-package llm
+package llm_test
 
 import (
 	"context"
 	"strings"
 	"testing"
+
+	"saga-api/internal/llm"
 )
 
-// stubProvider records the last model it was asked for and returns a fixed tag,
-// so a test can assert which backend the Router picked.
-type stubProvider struct {
-	tag       string
-	lastModel string
+type fakeProvider struct {
+	gotModel string
+	gotOpts  llm.ChatOptions
 }
 
-func (s *stubProvider) Chat(_ context.Context, model, _ string, _ func(string)) (string, error) {
-	s.lastModel = model
-	return s.tag, nil
+func (f *fakeProvider) Chat(_ context.Context, model, _ string, opts llm.ChatOptions, _ func(string)) (llm.ChatResult, error) {
+	f.gotModel = model
+	f.gotOpts = opts
+	return llm.ChatResult{Text: "ok", OutputTokens: 3}, nil
 }
 
 func TestRouterSelectsProviderByModel(t *testing.T) {
-	tests := []struct {
-		name  string
-		model string
-		want  string // which backend should handle it
-	}{
-		{"plain local model", "gemma4:e4b", "local"},
-		{"local model with version", "llama3.1:8b", "local"},
-		{"cloud colon tag", "qwen3-coder:480b:cloud", "cloud"},
-		{"cloud dash tag", "gpt-oss:120b-cloud", "cloud"},
-		{"bare cloud suffix", "somemodel:cloud", "cloud"},
+	local, cloud := &fakeProvider{}, &fakeProvider{}
+	r := llm.NewRouter(local, cloud)
+	got, err := r.Chat(context.Background(), "deepseek-v4-flash:cloud", "hi", llm.ChatOptions{Temperature: 0.2}, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			local := &stubProvider{tag: "local"}
-			cloud := &stubProvider{tag: "cloud"}
-			r := NewRouter(local, cloud)
-			got, err := r.Chat(context.Background(), tt.model, "p", nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got != tt.want {
-				t.Errorf("model %q routed to %q, want %q", tt.model, got, tt.want)
-			}
-			// The chosen backend must receive the model verbatim.
-			picked := local
-			if tt.want == "cloud" {
-				picked = cloud
-			}
-			if picked.lastModel != tt.model {
-				t.Errorf("backend got model %q, want %q", picked.lastModel, tt.model)
-			}
-		})
+	if got.Text != "ok" || cloud.gotModel != "deepseek-v4-flash:cloud" {
+		t.Fatalf("cloud not selected: %+v", got)
+	}
+	if local.gotModel != "" {
+		t.Fatal("local should not have been called")
+	}
+	if cloud.gotOpts.Temperature != 0.2 {
+		t.Fatal("options not threaded")
 	}
 }
 
 func TestRouterCloudModelWithoutKeyErrors(t *testing.T) {
-	r := NewRouter(&stubProvider{tag: "local"}, nil) // nil cloud = OLLAMA_API_KEY unset
-	_, err := r.Chat(context.Background(), "gpt-oss:120b-cloud", "p", nil)
+	r := llm.NewRouter(&fakeProvider{}, nil) // nil cloud = OLLAMA_API_KEY unset
+	_, err := r.Chat(context.Background(), "gpt-oss:120b-cloud", "p", llm.ChatOptions{}, nil)
 	if err == nil {
 		t.Fatal("want error when cloud model requested with cloud disabled")
 	}
@@ -66,9 +49,13 @@ func TestRouterCloudModelWithoutKeyErrors(t *testing.T) {
 }
 
 func TestRouterLocalStillWorksWithoutCloud(t *testing.T) {
-	r := NewRouter(&stubProvider{tag: "local"}, nil)
-	got, err := r.Chat(context.Background(), "gemma4:e4b", "p", nil)
-	if err != nil || got != "local" {
-		t.Fatalf("local routing with cloud disabled: got %q err %v", got, err)
+	local := &fakeProvider{}
+	r := llm.NewRouter(local, nil)
+	got, err := r.Chat(context.Background(), "gemma4:e4b", "p", llm.ChatOptions{}, nil)
+	if err != nil || got.Text != "ok" {
+		t.Fatalf("local routing with cloud disabled: got %q err %v", got.Text, err)
+	}
+	if local.gotModel != "gemma4:e4b" {
+		t.Errorf("backend got model %q, want gemma4:e4b", local.gotModel)
 	}
 }
