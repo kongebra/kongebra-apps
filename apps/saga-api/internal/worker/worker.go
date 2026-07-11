@@ -69,6 +69,9 @@ func dispatch(ctx context.Context, pool *pgxpool.Pool, deps module.Deps, bus *ap
 		}
 		owner := uuid.NewString()
 		job, err := queue.Claim(ctx, pool, owner, []string{tier})
+		if err != nil {
+			log.Printf("worker: claim: %v", err)
+		}
 		if err != nil || job == nil {
 			<-slots // nothing to run, release
 			return

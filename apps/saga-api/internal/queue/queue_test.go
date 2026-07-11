@@ -81,10 +81,15 @@ func TestCompleteIsFencedByOwner(t *testing.T) {
 	if a == nil || a.ID != id {
 		t.Fatalf("claim A: %+v", a)
 	}
-	// rescue back to queued (as RequeueStale would)
+	// Make the lease look stale, then rescue via the real production path
+	// (RequeueStale), not a hand-rolled approximation of it.
 	if _, err := pool.Exec(ctx,
-		`UPDATE jobs SET status='queued', lease_owner=NULL WHERE id=$1`, a.ID); err != nil {
+		`UPDATE jobs SET lease_at = now() - interval '1 hour' WHERE id=$1`, a.ID); err != nil {
 		t.Fatal(err)
+	}
+	n, err := RequeueStale(ctx, pool, 10*time.Minute)
+	if err != nil || n != 1 {
+		t.Fatalf("RequeueStale: n=%d err=%v", n, err)
 	}
 	b, _ := Claim(ctx, pool, "owner-B", []string{"local"})
 	if b == nil || b.ID != a.ID {
