@@ -10,10 +10,12 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"saga-api/internal/catalog"
 	"saga-api/internal/llm"
 	"saga-api/internal/module"
+	"saga-api/internal/store"
 	"saga-api/internal/summarize"
 )
 
@@ -22,6 +24,11 @@ const (
 	overlapWords    = 200
 	singlePassWords = 2500
 	defaultModel    = "gemma4:e4b"
+	// fixedSeed pins Ollama's sampling seed for every call this module makes.
+	// A fixed (not random-per-job) seed is what makes a "local" tier run
+	// reproducible (Run.Reproducible), and recording the same value we pass
+	// keeps job_runs.seed truthful.
+	fixedSeed = 42
 )
 
 type input struct {
@@ -68,22 +75,35 @@ func (Module) Run(ctx context.Context, raw json.RawMessage, deps module.Deps, em
 		return module.Result{}, err
 	}
 
+	// Accumulated across every summarize-stage LLM call (single-pass = 1 call;
+	// map-reduce = N map calls + 1 reduce call), so job_runs records the true
+	// cost/throughput of producing the summary, not just its last call.
+	var inTok, outTok int
+	var evalDur, wallDur time.Duration
 	chat := func(prompt string, onToken func(string)) (string, error) {
 		callCtx, cancel := context.WithTimeout(ctx, deps.ChunkTimeout)
 		defer cancel()
-		res, err := deps.LLM.Chat(callCtx, in.Model, prompt, llm.ChatOptions{Temperature: 0.2}, onToken)
+		res, err := deps.LLM.Chat(callCtx, in.Model, prompt, llm.ChatOptions{Temperature: 0.2, Seed: fixedSeed}, onToken)
+		inTok += res.InputTokens
+		outTok += res.OutputTokens
+		evalDur += res.EvalDuration
+		wallDur += res.WallClock
 		return res.Text, err
 	}
 	streamToken := func(tok string) {
 		emit(module.Event{Stage: "summarizing", Token: tok})
 	}
 
+	summarizeStart := time.Now()
 	var summary string
+	var chunkCount int
 	if len(strings.Fields(v.Transcript)) <= singlePassWords {
+		chunkCount = 1
 		emit(module.Event{Stage: "summarizing", Detail: "single pass"})
 		summary, err = chat(summarize.SinglePrompt(summarizeLang, v.Title, v.Transcript), streamToken)
 	} else {
 		chunks := summarize.Split(v.Transcript, chunkWords, overlapWords)
+		chunkCount = len(chunks)
 		parts := make([]string, 0, len(chunks))
 		for i, c := range chunks {
 			emit(module.Event{Stage: "summarizing", Detail: fmt.Sprintf("chunk %d/%d", i+1, len(chunks))})
@@ -99,22 +119,60 @@ func (Module) Run(ctx context.Context, raw json.RawMessage, deps module.Deps, em
 	if err != nil {
 		return module.Result{}, err
 	}
+	summarizeMs := time.Since(summarizeStart)
 	summary = summarize.CleanMath(summary)
+
+	run := store.Run{
+		Model:          in.Model,
+		SummarizeLang:  summarizeLang,
+		TargetLang:     targetLang,
+		PromptVersion:  summarize.PromptVersion,
+		ChunkCount:     chunkCount,
+		ResultMarkdown: summary,
+		Temperature:    0.2,
+		Seed:           fixedSeed,
+		InputTokens:    inTok,
+		OutputTokens:   outTok,
+		SummarizeMs:    int(summarizeMs.Milliseconds()),
+	}
+	// tok/s prefers Ollama's own eval_duration (excludes network/queueing
+	// overhead); falls back to measured wall time when the backend omits it
+	// (Ollama Cloud never reports eval_duration - see llm.ChatResult).
+	if genSecs := evalDur.Seconds(); genSecs > 0 {
+		run.GenTokS = float64(outTok) / genSecs
+	} else if genSecs = wallDur.Seconds(); genSecs > 0 {
+		run.GenTokS = float64(outTok) / genSecs
+	}
 
 	if needTranslate {
 		emit(module.Event{Stage: "translating"})
+		translateStart := time.Now()
 		translateCtx, cancel := context.WithTimeout(ctx, deps.ChunkTimeout)
-		tr, terr := deps.LLM.Chat(translateCtx, deps.TranslateModel, summarize.TranslatePrompt("no", summary), llm.ChatOptions{Temperature: 0.2}, nil)
+		tr, terr := deps.LLM.Chat(translateCtx, deps.TranslateModel, summarize.TranslatePrompt("no", summary), llm.ChatOptions{Temperature: 0.2, Seed: fixedSeed}, nil)
 		cancel()
 		if terr != nil {
 			return module.Result{}, fmt.Errorf("translate: %w", terr)
 		}
-		summary = summarize.CleanMath(tr.Text)
+		translated := summarize.CleanMath(tr.Text)
+		run.TranslateModel = deps.TranslateModel
+		run.TranslateMs = int(time.Since(translateStart).Milliseconds())
+		run.TranslatedMarkdown = translated
+		summary = translated
 	}
+
+	transcript := store.Transcript{
+		Text:   v.Transcript,
+		Sha256: store.Sha256(v.Transcript),
+		// ytdlp.Video does not currently expose caption language/source, so
+		// these are left empty rather than invented.
+	}
+	run.TranscriptSha256 = transcript.Sha256
 
 	return module.Result{
 		Markdown:         fmt.Sprintf("# %s\n\n<%s>\n\n%s\n", v.Title, in.URL, summary),
 		VideoTitle:       v.Title,
 		VideoDescription: v.Description,
+		Run:              run,
+		Transcript:       transcript,
 	}, nil
 }

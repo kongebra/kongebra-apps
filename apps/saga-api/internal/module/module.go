@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"saga-api/internal/llm"
+	"saga-api/internal/store"
 	"saga-api/internal/ytdlp"
 )
 
@@ -32,10 +33,16 @@ type Deps struct {
 
 // Result is what a module produces on success: the rendered Markdown plus
 // any video metadata worth surfacing on the job (front-page list title, etc).
+// Run and Transcript are the eval-store records: the module fills in the
+// metrics/timings/langs/tokens it alone has visibility into (everything but
+// the job-level fields the worker adds - JobID, Tier, cost); the worker
+// writes both to Postgres in the same transaction as job completion.
 type Result struct {
 	Markdown         string
 	VideoTitle       string
 	VideoDescription string
+	Run              store.Run
+	Transcript       store.Transcript
 }
 
 type Module interface {

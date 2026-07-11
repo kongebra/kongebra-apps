@@ -70,7 +70,13 @@ func (r *recordingLLM) Chat(ctx context.Context, model, prompt string, opts llm.
 	if onToken != nil {
 		onToken(r.reply)
 	}
-	return llm.ChatResult{Text: r.reply}, nil
+	return llm.ChatResult{
+		Text:         r.reply,
+		InputTokens:  10,
+		OutputTokens: 20,
+		EvalDuration: 50 * time.Millisecond,
+		WallClock:    60 * time.Millisecond,
+	}, nil
 }
 
 func TestRunConditionalTranslate(t *testing.T) {
@@ -126,6 +132,30 @@ func TestRunConditionalTranslate(t *testing.T) {
 				t.Errorf("want no translate call, got %d total calls: %+v", len(rec.calls), rec.calls)
 			}
 		})
+	}
+}
+
+// TestRunMetrics proves the module accumulates per-run eval-store metrics
+// (job_runs, written by the worker in a later step) instead of discarding
+// llm.ChatResult token/timing data after building the markdown.
+func TestRunMetrics(t *testing.T) {
+	f := fakeFetcher{video: ytdlp.Video{ID: "x", Title: "Video", Transcript: "short transcript"}}
+	rec := &recordingLLM{reply: "the summary"}
+	d := module.Deps{LLM: rec, Fetcher: f, ChunkTimeout: time.Minute}
+
+	res, err := Module{}.Run(context.Background(),
+		json.RawMessage(`{"url":"u"}`), d, func(module.Event) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Run.OutputTokens <= 0 {
+		t.Errorf("Run.OutputTokens = %d, want > 0", res.Run.OutputTokens)
+	}
+	if res.Run.ChunkCount < 1 {
+		t.Errorf("Run.ChunkCount = %d, want >= 1", res.Run.ChunkCount)
+	}
+	if res.Transcript.Sha256 == "" {
+		t.Error("Transcript.Sha256 is empty, want a content hash")
 	}
 }
 

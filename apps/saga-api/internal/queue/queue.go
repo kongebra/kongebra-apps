@@ -103,6 +103,17 @@ func CompleteOwned(ctx context.Context, pool *pgxpool.Pool, id int64, markdown, 
 	return tag.RowsAffected() == 1, err
 }
 
+// CompleteOwnedTx mirrors CompleteOwned but runs inside a caller-managed
+// transaction, so completion commits atomically with the job_runs INSERT the
+// worker writes alongside it: either both land, or neither does.
+func CompleteOwnedTx(ctx context.Context, tx pgx.Tx, id int64, markdown, owner string) (bool, error) {
+	tag, err := tx.Exec(ctx, `
+		UPDATE jobs SET status = 'done', result_markdown = $2,
+			finished_at = now(), error = NULL, progress = ''
+		WHERE id = $1 AND status = 'running' AND lease_owner = $3`, id, markdown, owner)
+	return tag.RowsAffected() == 1, err
+}
+
 // Fail requeues the job while attempts remain, otherwise parks it as failed.
 // Fenced by owner, so a fenced-out worker cannot rewrite a job another worker
 // now owns.

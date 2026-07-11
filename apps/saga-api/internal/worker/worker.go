@@ -17,8 +17,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"saga-api/internal/api"
+	"saga-api/internal/catalog"
 	"saga-api/internal/module"
 	"saga-api/internal/queue"
+	"saga-api/internal/store"
 )
 
 const (
@@ -129,19 +131,7 @@ func process(ctx context.Context, pool *pgxpool.Pool, deps module.Deps, bus *api
 
 	res, err := mod.Run(ctx, job.Input, deps, emit)
 	if err != nil {
-		if ferr := queue.Fail(ctx, pool, job.ID, err.Error(), owner); ferr != nil {
-			log.Printf("worker: job %d fail: %v", job.ID, ferr)
-			return
-		}
-		// queue.Fail requeues while attempts remain; only the terminal attempt
-		// parks the job as failed. Emit a terminal "failed" only then, so the
-		// web UI (which closes its SSE stream on "failed") keeps streaming
-		// across auto-retries and sees "retrying" instead.
-		stage := "retrying"
-		if job.Attempts >= queue.MaxAttempts {
-			stage = "failed"
-		}
-		bus.Publish(job.ID, module.Event{Stage: stage, Detail: err.Error()})
+		failAndPublish(ctx, pool, bus, job, owner, err.Error())
 		return
 	}
 	if res.VideoTitle != "" || res.VideoDescription != "" {
@@ -149,16 +139,82 @@ func process(ctx context.Context, pool *pgxpool.Pool, deps module.Deps, bus *api
 			log.Printf("worker: job %d set video meta: %v", job.ID, merr)
 		}
 	}
-	done, err := queue.CompleteOwned(ctx, pool, job.ID, res.Markdown, owner)
+	// Transcripts are content-addressed and idempotent (INSERT ... ON CONFLICT
+	// DO NOTHING), so saving one is safe outside the Complete transaction: a
+	// retry never creates a duplicate row, and job_runs.transcript_sha256 only
+	// needs the row to exist by commit time, not to commit atomically with it.
+	if terr := store.SaveTranscript(ctx, pool, res.Transcript); terr != nil {
+		failAndPublish(ctx, pool, bus, job, owner, terr.Error())
+		return
+	}
+	done, err := completeWithRun(ctx, pool, job, res, owner)
 	if err != nil {
-		log.Printf("worker: job %d complete: %v", job.ID, err)
+		failAndPublish(ctx, pool, bus, job, owner, err.Error())
 		return
 	}
 	if !done {
 		// Fenced out: the job was rescued and reclaimed by another worker while
-		// we ran. That worker owns the result now; do not publish a stale done.
+		// we ran. That worker owns the result now; do not publish a stale done,
+		// and completeWithRun already rolled back our job_runs INSERT so no
+		// duplicate eval-store row is left behind.
 		log.Printf("worker: job %d completion fenced out (owner %s lost lease)", job.ID, owner)
 		return
 	}
 	bus.Publish(job.ID, module.Event{Stage: "done"})
+}
+
+// failAndPublish requeues (or terminally fails) the job and publishes the
+// matching SSE event. queue.Fail requeues while attempts remain; only the
+// terminal attempt parks the job as failed. A terminal "failed" is emitted
+// only then, so the web UI (which closes its SSE stream on "failed") keeps
+// streaming across auto-retries and sees "retrying" instead.
+func failAndPublish(ctx context.Context, pool *pgxpool.Pool, bus *api.Bus, job *queue.Job, owner, msg string) {
+	if err := queue.Fail(ctx, pool, job.ID, msg, owner); err != nil {
+		log.Printf("worker: job %d fail: %v", job.ID, err)
+		return
+	}
+	stage := "retrying"
+	if job.Attempts >= queue.MaxAttempts {
+		stage = "failed"
+	}
+	bus.Publish(job.ID, module.Event{Stage: stage, Detail: msg})
+}
+
+// completeWithRun writes the job_runs record and completes the job in ONE
+// transaction: either both land, or neither does. job_runs is written only
+// on this path (success), so retries never leave noise rows in the eval
+// store, and a fenced-out completion (done=false) rolls back the INSERT too
+// - a worker that lost its lease must not add a duplicate run row for a job
+// another worker is now (or already has) running.
+func completeWithRun(ctx context.Context, pool *pgxpool.Pool, job *queue.Job, res module.Result, owner string) (bool, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	run := res.Run
+	run.JobID = job.ID
+	run.Tier = job.Tier
+	// TraceID awaits OTel wiring (spec section 7, a later task); left empty
+	// until job spans exist to record.
+	m, _ := catalog.Get(run.Model)
+	run.SummarizeCostUSD = m.PriceInPerMtok*float64(run.InputTokens)/1e6 + m.PriceOutPerMtok*float64(run.OutputTokens)/1e6
+	run.Reproducible = m.Tier == "local"
+
+	done := false
+	if err = store.InsertRun(ctx, tx, run); err == nil {
+		done, err = queue.CompleteOwnedTx(ctx, tx, job.ID, res.Markdown, owner)
+	}
+
+	if err != nil || !done {
+		if rerr := tx.Rollback(ctx); rerr != nil {
+			log.Printf("worker: job %d rollback: %v", job.ID, rerr)
+		}
+		return false, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
 }
