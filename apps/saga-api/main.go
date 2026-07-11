@@ -59,7 +59,7 @@ func main() {
 		ChunkTimeout: cfg.ChunkTimeout,
 	}
 	bus := api.NewBus()
-	go worker.Run(ctx, pool, deps, bus)
+	go worker.Run(ctx, pool, deps, bus, cfg.SAGACloudConcurrency)
 
 	srv := &http.Server{Addr: ":" + cfg.Port, Handler: api.New(pool, bus, deps.LLM, version)}
 	go func() {

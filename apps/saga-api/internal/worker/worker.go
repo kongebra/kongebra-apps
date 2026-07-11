@@ -1,13 +1,19 @@
-// Package worker drains the job queue. One goroutine in v1 (one GPU; the
-// llm semaphore would serialize more workers anyway).
+// Package worker drains the job queue with a dispatcher + bounded goroutine
+// pool. The dispatcher owns RequeueStale and per-tier capacity; it acquires a
+// tier slot BEFORE claiming, so a claimed job is always progressing and never
+// blocks on a semaphore while holding a lease (which would freeze its heartbeat
+// and let RequeueStale double-run it). A per-job fence token (owner) guards
+// every write, so a rescued-and-reclaimed job's original worker no-ops.
 package worker
 
 import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"saga-api/internal/api"
@@ -17,50 +23,70 @@ import (
 
 const (
 	pollInterval = 2 * time.Second
-	// leaseTimeout must exceed config ChunkTimeout (the max time a single LLM
-	// call - and thus the gap between heartbeats during the map phase - can
-	// run) so a legitimately-running job is never rescued out from under its
-	// worker.
-	leaseTimeout = 20 * time.Minute
 	// heartbeatEvery throttles lease refreshes during token streaming.
 	heartbeatEvery = 30 * time.Second
 )
 
-// Run blocks until ctx is cancelled.
-func Run(ctx context.Context, pool *pgxpool.Pool, deps module.Deps, bus *api.Bus) {
+// leaseTimeout must exceed the max time a single LLM call - and thus the gap
+// between heartbeats during the map phase - can run, so a legitimately-running
+// job is never rescued out from under its worker.
+func leaseTimeout(chunk time.Duration) time.Duration { return chunk + 5*time.Minute }
+
+// Run starts one dispatcher + a bounded set of job goroutines. A tier slot is
+// acquired BEFORE Claim, so a claimed job never blocks on a semaphore while
+// holding a lease (which would freeze its heartbeat and let RequeueStale
+// double-run it). cloudSlots caps concurrent cloud jobs; local is always 1.
+func Run(ctx context.Context, pool *pgxpool.Pool, deps module.Deps, bus *api.Bus, cloudSlots int) {
+	local := make(chan struct{}, 1)
+	cloud := make(chan struct{}, cloudSlots)
+	var wg sync.WaitGroup
 	t := time.NewTicker(pollInterval)
 	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
+			wg.Wait()
 			return
 		case <-t.C:
 		}
-		if n, err := queue.RequeueStale(ctx, pool, leaseTimeout); err != nil {
+		if n, err := queue.RequeueStale(ctx, pool, leaseTimeout(deps.ChunkTimeout)); err != nil {
 			log.Printf("worker: requeue stale: %v", err)
 		} else if n > 0 {
 			log.Printf("worker: rescued %d stale job(s)", n)
 		}
-		for {
-			worked, err := ProcessOne(ctx, pool, deps, bus)
-			if err != nil {
-				log.Printf("worker: %v", err)
-				break
-			}
-			if !worked {
-				break
-			}
-		}
+		dispatch(ctx, pool, deps, bus, local, "local", &wg)
+		dispatch(ctx, pool, deps, bus, cloud, "cloud", &wg)
 	}
 }
 
-// ProcessOne claims and runs a single job. Returns false when the queue is empty.
-func ProcessOne(ctx context.Context, pool *pgxpool.Pool, deps module.Deps, bus *api.Bus) (bool, error) {
-	job, err := queue.Claim(ctx, pool)
-	if err != nil || job == nil {
-		return false, err
+func dispatch(ctx context.Context, pool *pgxpool.Pool, deps module.Deps, bus *api.Bus,
+	slots chan struct{}, tier string, wg *sync.WaitGroup) {
+	for {
+		select {
+		case slots <- struct{}{}: // acquire BEFORE claim
+		default:
+			return // tier full this tick
+		}
+		owner := uuid.NewString()
+		job, err := queue.Claim(ctx, pool, owner, []string{tier})
+		if err != nil || job == nil {
+			<-slots // nothing to run, release
+			return
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-slots }()
+			process(ctx, pool, deps, bus, job, owner)
+		}()
 	}
-	log.Printf("worker: job %d (%s) attempt %d", job.ID, job.Module, job.Attempts)
+}
+
+// process runs a single already-claimed job to a terminal state. owner is the
+// fence token: every write is guarded by it, so a job rescued and reclaimed by
+// another worker mid-run is not double-written by this worker.
+func process(ctx context.Context, pool *pgxpool.Pool, deps module.Deps, bus *api.Bus, job *queue.Job, owner string) {
+	log.Printf("worker: job %d (%s) attempt %d owner %s", job.ID, job.Module, job.Attempts, owner)
 
 	mod, ok := module.Get(job.Module)
 	if !ok {
@@ -72,11 +98,12 @@ func ProcessOne(ctx context.Context, pool *pgxpool.Pool, deps module.Deps, bus *
 		// attempts reach MaxAttempts, acceptable since an unknown module
 		// never becomes known between retries.
 		msg := fmt.Sprintf("unknown module %q", job.Module)
-		if err := queue.Fail(ctx, pool, job.ID, msg); err != nil {
-			return true, err
+		if err := queue.Fail(ctx, pool, job.ID, msg, owner); err != nil {
+			log.Printf("worker: job %d fail: %v", job.ID, err)
+			return
 		}
 		bus.Publish(job.ID, module.Event{Stage: "failed", Detail: msg})
-		return true, nil
+		return
 	}
 
 	lastBeat := time.Now()
@@ -87,11 +114,11 @@ func ProcessOne(ctx context.Context, pool *pgxpool.Pool, deps module.Deps, bus *
 			if ev.Detail != "" {
 				p += ": " + ev.Detail
 			}
-			if err := queue.SetProgress(ctx, pool, job.ID, p); err == nil {
+			if err := queue.SetProgress(ctx, pool, job.ID, p, owner); err == nil {
 				lastBeat = time.Now()
 			}
 		} else if time.Since(lastBeat) > heartbeatEvery {
-			if err := queue.SetProgress(ctx, pool, job.ID, "summarizing"); err == nil {
+			if err := queue.SetProgress(ctx, pool, job.ID, "summarizing", owner); err == nil {
 				lastBeat = time.Now()
 			}
 		}
@@ -99,8 +126,9 @@ func ProcessOne(ctx context.Context, pool *pgxpool.Pool, deps module.Deps, bus *
 
 	res, err := mod.Run(ctx, job.Input, deps, emit)
 	if err != nil {
-		if ferr := queue.Fail(ctx, pool, job.ID, err.Error()); ferr != nil {
-			return true, ferr
+		if ferr := queue.Fail(ctx, pool, job.ID, err.Error(), owner); ferr != nil {
+			log.Printf("worker: job %d fail: %v", job.ID, ferr)
+			return
 		}
 		// queue.Fail requeues while attempts remain; only the terminal attempt
 		// parks the job as failed. Emit a terminal "failed" only then, so the
@@ -111,16 +139,23 @@ func ProcessOne(ctx context.Context, pool *pgxpool.Pool, deps module.Deps, bus *
 			stage = "failed"
 		}
 		bus.Publish(job.ID, module.Event{Stage: stage, Detail: err.Error()})
-		return true, nil
+		return
 	}
 	if res.VideoTitle != "" || res.VideoDescription != "" {
 		if merr := queue.SetVideoMeta(ctx, pool, job.ID, res.VideoTitle, res.VideoDescription); merr != nil {
 			log.Printf("worker: job %d set video meta: %v", job.ID, merr)
 		}
 	}
-	if err := queue.Complete(ctx, pool, job.ID, res.Markdown); err != nil {
-		return true, err
+	done, err := queue.CompleteOwned(ctx, pool, job.ID, res.Markdown, owner)
+	if err != nil {
+		log.Printf("worker: job %d complete: %v", job.ID, err)
+		return
+	}
+	if !done {
+		// Fenced out: the job was rescued and reclaimed by another worker while
+		// we ran. That worker owns the result now; do not publish a stale done.
+		log.Printf("worker: job %d completion fenced out (owner %s lost lease)", job.ID, owner)
+		return
 	}
 	bus.Publish(job.ID, module.Event{Stage: "done"})
-	return true, nil
 }

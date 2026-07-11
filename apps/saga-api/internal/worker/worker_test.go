@@ -54,22 +54,32 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-func TestProcessOneCompletesJob(t *testing.T) {
+// claimOne claims the single queued local job for a test worker and returns it
+// with its fence owner.
+func claimOne(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (*queue.Job, string) {
+	t.Helper()
+	owner := "test-worker"
+	job, err := queue.Claim(ctx, pool, owner, []string{"local"})
+	if err != nil || job == nil {
+		t.Fatalf("claim: job=%+v err=%v", job, err)
+	}
+	return job, owner
+}
+
+func TestProcessCompletesJob(t *testing.T) {
 	module.Register(okModule{})
 	ctx := context.Background()
 	pool := testPool(t)
-	id, _ := queue.Enqueue(ctx, pool, "test-ok", []byte(`{}`))
+	id, _ := queue.Enqueue(ctx, pool, "test-ok", []byte(`{}`), "local")
 	bus := api.NewBus()
 	ch, cancel := bus.Subscribe(id)
 	defer cancel()
 
-	worked, err := ProcessOne(ctx, pool, module.Deps{ChunkTimeout: time.Minute}, bus)
-	if err != nil || !worked {
-		t.Fatalf("worked=%v err=%v", worked, err)
-	}
-	job, _ := queue.Get(ctx, pool, id)
-	if job.Status != "done" || *job.ResultMarkdown != "# result" {
-		t.Fatalf("%+v", job)
+	job, owner := claimOne(t, ctx, pool)
+	process(ctx, pool, module.Deps{ChunkTimeout: time.Minute}, bus, job, owner)
+	got, _ := queue.Get(ctx, pool, id)
+	if got.Status != "done" || *got.ResultMarkdown != "# result" {
+		t.Fatalf("%+v", got)
 	}
 	// terminal event published
 	var last module.Event
@@ -81,20 +91,44 @@ func TestProcessOneCompletesJob(t *testing.T) {
 	}
 }
 
-func TestProcessOneFailsJob(t *testing.T) {
+// TestProcessFencedOutDoesNotComplete proves the double-run guard at the worker
+// level: a worker whose job was rescued and reclaimed by another owner must not
+// write a done result nor publish a terminal "done".
+func TestProcessFencedOutDoesNotComplete(t *testing.T) {
+	module.Register(okModule{})
+	ctx := context.Background()
+	pool := testPool(t)
+	id, _ := queue.Enqueue(ctx, pool, "test-ok", []byte(`{}`), "local")
+	bus := api.NewBus()
+
+	job, owner := claimOne(t, ctx, pool)
+	// Simulate a stale rescue + reclaim by a different worker while this one runs.
+	if _, err := pool.Exec(ctx,
+		`UPDATE jobs SET status='running', lease_owner='other-worker' WHERE id=$1`, id); err != nil {
+		t.Fatal(err)
+	}
+	process(ctx, pool, module.Deps{ChunkTimeout: time.Minute}, bus, job, owner)
+	got, _ := queue.Get(ctx, pool, id)
+	if got.Status == "done" || got.ResultMarkdown != nil {
+		t.Fatalf("fenced-out worker wrote a result: %+v", got)
+	}
+	if got.LeaseOwner == nil || *got.LeaseOwner != "other-worker" {
+		t.Fatalf("fence owner clobbered: %+v", got)
+	}
+}
+
+func TestProcessFailsJob(t *testing.T) {
 	module.Register(failModule{})
 	ctx := context.Background()
 	pool := testPool(t)
-	id, _ := queue.Enqueue(ctx, pool, "test-fail", []byte(`{}`))
+	id, _ := queue.Enqueue(ctx, pool, "test-fail", []byte(`{}`), "local")
 	bus := api.NewBus()
-	worked, err := ProcessOne(ctx, pool, module.Deps{}, bus)
-	if err != nil || !worked {
-		t.Fatalf("worked=%v err=%v", worked, err)
-	}
-	job, _ := queue.Get(ctx, pool, id)
+	job, owner := claimOne(t, ctx, pool)
+	process(ctx, pool, module.Deps{}, bus, job, owner)
+	got, _ := queue.Get(ctx, pool, id)
 	// first failure requeues (MaxAttempts=3)
-	if job.Status != "queued" || *job.Error != "kaboom" {
-		t.Fatalf("%+v", job)
+	if got.Status != "queued" || *got.Error != "kaboom" {
+		t.Fatalf("%+v", got)
 	}
 }
 
@@ -103,11 +137,11 @@ func TestProcessOneFailsJob(t *testing.T) {
 // mod.Run errored. Requeued attempts (attempts < MaxAttempts) must publish
 // "retrying" so the web UI's SSE stream stays open; only the attempt that
 // parks the job as "failed" in the DB may publish a terminal "failed".
-func TestProcessOneEmitsRetryingThenFailed(t *testing.T) {
+func TestProcessEmitsRetryingThenFailed(t *testing.T) {
 	module.Register(failModule{})
 	ctx := context.Background()
 	pool := testPool(t)
-	id, _ := queue.Enqueue(ctx, pool, "test-fail", []byte(`{}`))
+	id, _ := queue.Enqueue(ctx, pool, "test-fail", []byte(`{}`), "local")
 	bus := api.NewBus()
 	ch, cancel := bus.Subscribe(id)
 	defer cancel()
@@ -122,27 +156,25 @@ func TestProcessOneEmitsRetryingThenFailed(t *testing.T) {
 	}
 
 	for attempt := 1; attempt <= queue.MaxAttempts; attempt++ {
-		worked, err := ProcessOne(ctx, pool, module.Deps{}, bus)
-		if err != nil || !worked {
-			t.Fatalf("attempt %d: worked=%v err=%v", attempt, worked, err)
-		}
+		job, owner := claimOne(t, ctx, pool)
+		process(ctx, pool, module.Deps{}, bus, job, owner)
 
 		ev := drainLast()
-		job, _ := queue.Get(ctx, pool, id)
+		after, _ := queue.Get(ctx, pool, id)
 
 		if attempt < queue.MaxAttempts {
 			if ev.Stage != "retrying" {
-				t.Fatalf("attempt %d: got stage %q, want %q (job: %+v)", attempt, ev.Stage, "retrying", job)
+				t.Fatalf("attempt %d: got stage %q, want %q (job: %+v)", attempt, ev.Stage, "retrying", after)
 			}
-			if job.Status != "queued" {
-				t.Fatalf("attempt %d: got status %q, want %q", attempt, job.Status, "queued")
+			if after.Status != "queued" {
+				t.Fatalf("attempt %d: got status %q, want %q", attempt, after.Status, "queued")
 			}
 		} else {
 			if ev.Stage != "failed" {
-				t.Fatalf("attempt %d: got stage %q, want %q (job: %+v)", attempt, ev.Stage, "failed", job)
+				t.Fatalf("attempt %d: got stage %q, want %q (job: %+v)", attempt, ev.Stage, "failed", after)
 			}
-			if job.Status != "failed" {
-				t.Fatalf("attempt %d: got status %q, want %q", attempt, job.Status, "failed")
+			if after.Status != "failed" {
+				t.Fatalf("attempt %d: got status %q, want %q", attempt, after.Status, "failed")
 			}
 		}
 		if ev.Detail != "kaboom" {
@@ -151,11 +183,11 @@ func TestProcessOneEmitsRetryingThenFailed(t *testing.T) {
 	}
 }
 
-func TestProcessOneEmptyQueue(t *testing.T) {
+func TestClaimEmptyQueue(t *testing.T) {
 	ctx := context.Background()
 	pool := testPool(t)
-	worked, err := ProcessOne(ctx, pool, module.Deps{}, api.NewBus())
-	if err != nil || worked {
-		t.Fatalf("worked=%v err=%v", worked, err)
+	job, err := queue.Claim(ctx, pool, "test-worker", []string{"local"})
+	if err != nil || job != nil {
+		t.Fatalf("job=%+v err=%v", job, err)
 	}
 }

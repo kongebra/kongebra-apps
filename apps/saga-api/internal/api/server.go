@@ -89,7 +89,18 @@ func (s *server) createJob(w http.ResponseWriter, r *http.Request) {
 	if len(req.Input) == 0 {
 		req.Input = json.RawMessage(`{}`)
 	}
-	id, err := queue.Enqueue(r.Context(), s.pool, req.Module, req.Input)
+	// Route to a capacity tier by the requested model. Default "local" when the
+	// input carries no model or an unknown one (the module also defaults there).
+	tier := "local"
+	var probe struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(req.Input, &probe); err == nil && probe.Model != "" {
+		if m, ok := catalog.Get(probe.Model); ok {
+			tier = m.Tier
+		}
+	}
+	id, err := queue.Enqueue(r.Context(), s.pool, req.Module, req.Input, tier)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

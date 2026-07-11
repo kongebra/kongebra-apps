@@ -30,43 +30,51 @@ type Job struct {
 	TranslatedLang     *string
 	VideoTitle         *string
 	VideoDescription   *string
+	// Tier routes the job to a capacity pool: "local" (single GPU) or "cloud".
+	Tier string
+	// LeaseOwner is the fence token of the worker currently holding the lease.
+	// A rescued-and-reclaimed job's original worker no-ops on write because its
+	// owner no longer matches. NULL while queued/unclaimed.
+	LeaseOwner *string
 }
 
 const jobCols = `id, module, input, status, attempts, progress, error,
 	result_markdown, created_at, started_at, finished_at, translated_markdown, translated_lang,
-	video_title, video_description`
+	video_title, video_description, tier, lease_owner`
 
 func scanJob(row pgx.Row) (*Job, error) {
 	var j Job
 	err := row.Scan(&j.ID, &j.Module, &j.Input, &j.Status, &j.Attempts, &j.Progress,
 		&j.Error, &j.ResultMarkdown, &j.CreatedAt, &j.StartedAt, &j.FinishedAt,
-		&j.TranslatedMarkdown, &j.TranslatedLang, &j.VideoTitle, &j.VideoDescription)
+		&j.TranslatedMarkdown, &j.TranslatedLang, &j.VideoTitle, &j.VideoDescription,
+		&j.Tier, &j.LeaseOwner)
 	if err != nil {
 		return nil, err
 	}
 	return &j, nil
 }
 
-func Enqueue(ctx context.Context, pool *pgxpool.Pool, module string, input []byte) (int64, error) {
+func Enqueue(ctx context.Context, pool *pgxpool.Pool, module string, input []byte, tier string) (int64, error) {
 	var id int64
 	err := pool.QueryRow(ctx,
-		`INSERT INTO jobs (module, input) VALUES ($1, $2) RETURNING id`,
-		module, input).Scan(&id)
+		`INSERT INTO jobs (module, input, tier) VALUES ($1, $2, $3) RETURNING id`,
+		module, input, tier).Scan(&id)
 	return id, err
 }
 
-// Claim atomically picks the oldest queued job. SKIP LOCKED makes concurrent
-// claimers (future: more workers) never double-claim. Returns nil, nil on empty.
-func Claim(ctx context.Context, pool *pgxpool.Pool) (*Job, error) {
+// Claim atomically picks the oldest queued job whose tier is one of tiers,
+// stamping lease_owner = owner. SKIP LOCKED makes concurrent claimers (the
+// dispatcher pool) never double-claim. Returns nil, nil on empty.
+func Claim(ctx context.Context, pool *pgxpool.Pool, owner string, tiers []string) (*Job, error) {
 	j, err := scanJob(pool.QueryRow(ctx, `
 		UPDATE jobs SET status = 'running', attempts = attempts + 1,
-			started_at = now(), lease_at = now()
+			started_at = now(), lease_at = now(), lease_owner = $1
 		WHERE id = (
-			SELECT id FROM jobs WHERE status = 'queued'
+			SELECT id FROM jobs WHERE status = 'queued' AND tier = ANY($2)
 			ORDER BY id LIMIT 1
 			FOR UPDATE SKIP LOCKED
 		)
-		RETURNING `+jobCols))
+		RETURNING `+jobCols, owner, tiers))
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
@@ -74,30 +82,38 @@ func Claim(ctx context.Context, pool *pgxpool.Pool) (*Job, error) {
 }
 
 // SetProgress updates the human-readable progress AND refreshes the lease,
-// so it doubles as the worker heartbeat.
-func SetProgress(ctx context.Context, pool *pgxpool.Pool, id int64, progress string) error {
+// so it doubles as the worker heartbeat. Fenced by owner: a worker that lost
+// its lease (rescued + reclaimed) no-ops instead of resurrecting a dead lease.
+func SetProgress(ctx context.Context, pool *pgxpool.Pool, id int64, progress, owner string) error {
 	_, err := pool.Exec(ctx,
-		`UPDATE jobs SET progress = $2, lease_at = now() WHERE id = $1`, id, progress)
+		`UPDATE jobs SET progress = $2, lease_at = now() WHERE id = $1 AND lease_owner = $3`,
+		id, progress, owner)
 	return err
 }
 
-func Complete(ctx context.Context, pool *pgxpool.Pool, id int64, markdown string) error {
-	_, err := pool.Exec(ctx, `
+// CompleteOwned marks the job done, fenced by owner. It returns true only when
+// it affected the row: false means the caller was fenced out (the job was
+// rescued and reclaimed by another worker), so the caller must NOT publish a
+// stale terminal event. This is the guard against a double-run writing twice.
+func CompleteOwned(ctx context.Context, pool *pgxpool.Pool, id int64, markdown, owner string) (bool, error) {
+	tag, err := pool.Exec(ctx, `
 		UPDATE jobs SET status = 'done', result_markdown = $2,
 			finished_at = now(), error = NULL, progress = ''
-		WHERE id = $1 AND status = 'running'`, id, markdown)
-	return err
+		WHERE id = $1 AND status = 'running' AND lease_owner = $3`, id, markdown, owner)
+	return tag.RowsAffected() == 1, err
 }
 
 // Fail requeues the job while attempts remain, otherwise parks it as failed.
-func Fail(ctx context.Context, pool *pgxpool.Pool, id int64, msg string) error {
+// Fenced by owner, so a fenced-out worker cannot rewrite a job another worker
+// now owns.
+func Fail(ctx context.Context, pool *pgxpool.Pool, id int64, msg, owner string) error {
 	_, err := pool.Exec(ctx, `
 		UPDATE jobs SET
 			status = CASE WHEN attempts >= $2 THEN 'failed' ELSE 'queued' END,
 			error = $3,
 			finished_at = CASE WHEN attempts >= $2 THEN now() ELSE NULL END,
 			lease_at = NULL
-		WHERE id = $1 AND status = 'running'`, id, MaxAttempts, msg)
+		WHERE id = $1 AND status = 'running' AND lease_owner = $4`, id, MaxAttempts, msg, owner)
 	return err
 }
 
@@ -166,7 +182,7 @@ func SetTranslation(ctx context.Context, pool *pgxpool.Pool, id int64, lang, mar
 func Retry(ctx context.Context, pool *pgxpool.Pool, id int64) (bool, error) {
 	tag, err := pool.Exec(ctx, `
 		UPDATE jobs SET status = 'queued', attempts = 0, error = NULL,
-			progress = '', result_markdown = NULL, finished_at = NULL
+			progress = '', result_markdown = NULL, finished_at = NULL, lease_owner = NULL
 		WHERE id = $1 AND status = 'failed'`, id)
 	if err != nil {
 		return false, err
