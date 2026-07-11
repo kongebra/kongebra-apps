@@ -31,6 +31,12 @@ func main() {
 	if cfg.DatabaseURL == "" {
 		log.Fatal("DATABASE_URL is required")
 	}
+	// The default translate model is a cloud tag; without an API key it is
+	// unreachable, so fall back to a local Norwegian-capable model at boot
+	// (not mid-pipeline) so translate keeps working offline.
+	if cfg.OllamaAPIKey == "" {
+		cfg.TranslateModel = "gemma4:e4b"
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -54,9 +60,10 @@ func main() {
 	router := llm.NewRouter(llm.New(cfg.OllamaURL), cloud)
 
 	deps := module.Deps{
-		LLM:          router,
-		Fetcher:      ytdlp.Exec{Bin: cfg.YtdlpPath, WorkDir: cfg.WorkDir},
-		ChunkTimeout: cfg.ChunkTimeout,
+		LLM:            router,
+		Fetcher:        ytdlp.Exec{Bin: cfg.YtdlpPath, WorkDir: cfg.WorkDir},
+		ChunkTimeout:   cfg.ChunkTimeout,
+		TranslateModel: cfg.TranslateModel,
 	}
 	bus := api.NewBus()
 	go worker.Run(ctx, pool, deps, bus, cfg.SAGACloudConcurrency)

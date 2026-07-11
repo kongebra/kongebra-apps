@@ -13,6 +13,7 @@ type Config struct {
 	OllamaURL      string
 	OllamaCloudURL string
 	OllamaAPIKey   string // no default; empty = Ollama Cloud disabled
+	TranslateModel string // pinned model for the "no" translate pass; resolved at boot in main.go when Ollama Cloud is disabled
 	YtdlpPath      string
 	WorkDir        string // writable dir for yt-dlp temp files (emptyDir in k8s)
 	ChunkTimeout   time.Duration
@@ -28,6 +29,7 @@ func Load() Config {
 		OllamaURL:            getenv("OLLAMA_URL", "http://100.125.242.93:11434"),
 		OllamaCloudURL:       getenv("OLLAMA_CLOUD_URL", "https://ollama.com"),
 		OllamaAPIKey:         os.Getenv("OLLAMA_API_KEY"),
+		TranslateModel:       getenv("TRANSLATE_MODEL", "deepseek-v4-flash:cloud"),
 		YtdlpPath:            getenv("YTDLP_PATH", "yt-dlp"),
 		WorkDir:              getenv("WORK_DIR", os.TempDir()),
 		ChunkTimeout:         getduration("CHUNK_TIMEOUT", 15*time.Minute),

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"strings"
 
+	"saga-api/internal/catalog"
 	"saga-api/internal/llm"
 	"saga-api/internal/module"
 	"saga-api/internal/summarize"
@@ -49,6 +50,16 @@ func (Module) Run(ctx context.Context, raw json.RawMessage, deps module.Deps, em
 		in.Model = defaultModel
 	}
 
+	// Norwegian-capable models summarize in Norwegian directly. English-only
+	// models summarize in English, then a pinned cloud model translates -
+	// English target never translates.
+	targetLang := in.Lang
+	summarizeLang := targetLang
+	needTranslate := targetLang == "no" && !catalog.IsNorwegian(in.Model)
+	if needTranslate {
+		summarizeLang = "en"
+	}
+
 	emit(module.Event{Stage: "fetching"})
 	fetchCtx, cancel := context.WithTimeout(ctx, deps.ChunkTimeout)
 	v, err := deps.Fetcher.Fetch(fetchCtx, in.URL, in.Lang)
@@ -70,25 +81,36 @@ func (Module) Run(ctx context.Context, raw json.RawMessage, deps module.Deps, em
 	var summary string
 	if len(strings.Fields(v.Transcript)) <= singlePassWords {
 		emit(module.Event{Stage: "summarizing", Detail: "single pass"})
-		summary, err = chat(summarize.SinglePrompt(in.Lang, v.Title, v.Transcript), streamToken)
+		summary, err = chat(summarize.SinglePrompt(summarizeLang, v.Title, v.Transcript), streamToken)
 	} else {
 		chunks := summarize.Split(v.Transcript, chunkWords, overlapWords)
 		parts := make([]string, 0, len(chunks))
 		for i, c := range chunks {
 			emit(module.Event{Stage: "summarizing", Detail: fmt.Sprintf("chunk %d/%d", i+1, len(chunks))})
-			part, cerr := chat(summarize.MapPrompt(in.Lang, v.Title, c), nil)
+			part, cerr := chat(summarize.MapPrompt(summarizeLang, v.Title, c), nil)
 			if cerr != nil {
 				return module.Result{}, fmt.Errorf("chunk %d/%d: %w", i+1, len(chunks), cerr)
 			}
 			parts = append(parts, part)
 		}
 		emit(module.Event{Stage: "summarizing", Detail: "synthesis"})
-		summary, err = chat(summarize.ReducePrompt(in.Lang, v.Title, parts), streamToken)
+		summary, err = chat(summarize.ReducePrompt(summarizeLang, v.Title, parts), streamToken)
 	}
 	if err != nil {
 		return module.Result{}, err
 	}
 	summary = summarize.CleanMath(summary)
+
+	if needTranslate {
+		emit(module.Event{Stage: "translating"})
+		translateCtx, cancel := context.WithTimeout(ctx, deps.ChunkTimeout)
+		tr, terr := deps.LLM.Chat(translateCtx, deps.TranslateModel, summarize.TranslatePrompt("no", summary), llm.ChatOptions{Temperature: 0.2}, nil)
+		cancel()
+		if terr != nil {
+			return module.Result{}, fmt.Errorf("translate: %w", terr)
+		}
+		summary = summarize.CleanMath(tr.Text)
+	}
 
 	return module.Result{
 		Markdown:         fmt.Sprintf("# %s\n\n<%s>\n\n%s\n", v.Title, in.URL, summary),

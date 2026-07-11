@@ -5,6 +5,11 @@ import (
 	"strings"
 )
 
+// PromptVersion identifies the current prompt wording. Bump this whenever any
+// prompt in this file changes, so summaries can be traced back to the wording
+// that produced them.
+const PromptVersion = "2026-07-10"
+
 // Prompts are written in English (small models follow English instructions
 // best) with an explicit output-language directive.
 func langName(lang string) string {

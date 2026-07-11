@@ -51,6 +51,84 @@ func deps(t *testing.T, f ytdlp.Fetcher, reply string) module.Deps {
 	return module.Deps{LLM: fakeLLM(t, reply), Fetcher: f, ChunkTimeout: time.Minute}
 }
 
+// llmCall records one Chat invocation's model and prompt, so a test can
+// assert which model saw which prompt without decoding an HTTP wire format.
+type llmCall struct {
+	model  string
+	prompt string
+}
+
+// recordingLLM is a fake llm.Provider that answers every Chat call with a
+// canned reply while recording the (model, prompt) pair.
+type recordingLLM struct {
+	reply string
+	calls []llmCall
+}
+
+func (r *recordingLLM) Chat(ctx context.Context, model, prompt string, opts llm.ChatOptions, onToken func(string)) (llm.ChatResult, error) {
+	r.calls = append(r.calls, llmCall{model: model, prompt: prompt})
+	if onToken != nil {
+		onToken(r.reply)
+	}
+	return llm.ChatResult{Text: r.reply}, nil
+}
+
+func TestRunConditionalTranslate(t *testing.T) {
+	const translateModel = "deepseek-v4-flash:cloud"
+
+	cases := []struct {
+		name              string
+		lang              string
+		model             string
+		wantSummarizeWord string // word from langName() expected in the summarize prompt
+		wantTranslate     bool
+	}{
+		{name: "english target never translates", lang: "en", model: "qwen3.5:2b", wantSummarizeWord: "English", wantTranslate: false},
+		{name: "norwegian-capable model summarizes directly", lang: "no", model: "gemma4:e4b", wantSummarizeWord: "Norwegian", wantTranslate: false},
+		{name: "english-only model summarizes in english then translates", lang: "no", model: "qwen3.5:2b", wantSummarizeWord: "English", wantTranslate: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := fakeFetcher{video: ytdlp.Video{ID: "x", Title: "Video", Transcript: "short transcript"}}
+			rec := &recordingLLM{reply: "the summary"}
+			d := module.Deps{LLM: rec, Fetcher: f, ChunkTimeout: time.Minute, TranslateModel: translateModel}
+			raw := json.RawMessage(fmt.Sprintf(`{"url":"u","lang":%q,"model":%q}`, tc.lang, tc.model))
+
+			_, err := Module{}.Run(context.Background(), raw, d, func(module.Event) {})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if len(rec.calls) == 0 {
+				t.Fatal("expected at least one LLM call")
+			}
+			summarizeCall := rec.calls[0]
+			if summarizeCall.model != tc.model {
+				t.Errorf("summarize call model = %q, want %q", summarizeCall.model, tc.model)
+			}
+			if !strings.Contains(summarizeCall.prompt, tc.wantSummarizeWord) {
+				t.Errorf("summarize prompt = %q, want it to contain %q", summarizeCall.prompt, tc.wantSummarizeWord)
+			}
+
+			if tc.wantTranslate {
+				if len(rec.calls) != 2 {
+					t.Fatalf("want 2 LLM calls (summarize + translate), got %d", len(rec.calls))
+				}
+				translateCall := rec.calls[1]
+				if translateCall.model != translateModel {
+					t.Errorf("translate call model = %q, want %q", translateCall.model, translateModel)
+				}
+				if !strings.Contains(translateCall.prompt, "Translate") {
+					t.Errorf("translate prompt = %q, want it to look like a translate prompt", translateCall.prompt)
+				}
+			} else if len(rec.calls) != 1 {
+				t.Errorf("want no translate call, got %d total calls: %+v", len(rec.calls), rec.calls)
+			}
+		})
+	}
+}
+
 func TestRunSinglePass(t *testing.T) {
 	f := fakeFetcher{video: ytdlp.Video{ID: "x", Title: "Short Video", Transcript: "short transcript"}}
 	var events []module.Event

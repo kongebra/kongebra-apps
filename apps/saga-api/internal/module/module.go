@@ -24,9 +24,10 @@ type Event struct {
 }
 
 type Deps struct {
-	LLM          llm.Provider
-	Fetcher      ytdlp.Fetcher
-	ChunkTimeout time.Duration // per-LLM-call budget, not per-job
+	LLM            llm.Provider
+	Fetcher        ytdlp.Fetcher
+	ChunkTimeout   time.Duration // per-LLM-call budget, not per-job
+	TranslateModel string        // pinned cloud (or local fallback) model for "no" translate pass
 }
 
 // Result is what a module produces on success: the rendered Markdown plus
