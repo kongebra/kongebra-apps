@@ -191,13 +191,20 @@ func completeWithRun(ctx context.Context, pool *pgxpool.Pool, job *queue.Job, re
 	if err != nil {
 		return false, err
 	}
+	// Backstop for the commit-failure path: if tx.Commit below fails, this
+	// releases the pooled connection. A Rollback after a successful Commit is
+	// a harmless no-op (returns an already-closed-tx error we ignore).
+	defer tx.Rollback(ctx)
 
 	run := res.Run
 	run.JobID = job.ID
 	run.Tier = job.Tier
 	// TraceID awaits OTel wiring (spec section 7, a later task); left empty
 	// until job spans exist to record.
-	m, _ := catalog.Get(run.Model)
+	m, found := catalog.Get(run.Model)
+	if !found {
+		log.Printf("worker: job %d: model %q not in catalog, recording zero cost/non-reproducible run", job.ID, run.Model)
+	}
 	run.SummarizeCostUSD = m.PriceInPerMtok*float64(run.InputTokens)/1e6 + m.PriceOutPerMtok*float64(run.OutputTokens)/1e6
 	run.Reproducible = m.Tier == "local"
 
