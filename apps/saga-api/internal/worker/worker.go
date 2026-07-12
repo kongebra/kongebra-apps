@@ -8,6 +8,7 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"sync"
@@ -15,10 +16,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 
 	"saga-api/internal/api"
 	"saga-api/internal/catalog"
 	"saga-api/internal/module"
+	"saga-api/internal/obs"
 	"saga-api/internal/queue"
 	"saga-api/internal/store"
 )
@@ -90,8 +96,25 @@ func dispatch(ctx context.Context, pool *pgxpool.Pool, deps module.Deps, bus *ap
 // process runs a single already-claimed job to a terminal state. owner is the
 // fence token: every write is guarded by it, so a job rescued and reclaimed by
 // another worker mid-run is not double-written by this worker.
+//
+// A NEW ROOT span is started here (not derived from ctx) because ctx is the
+// worker's long-lived shutdown-aware context shared across every job, not a
+// per-request context - there is no meaningful parent trace to attach to.
+// ponytail: a single job span carries all attributes (job.id, tier, model,
+// timings); per-stage child spans (fetch/summarize/translate) are deferred -
+// add them if per-stage latency ever needs isolating in Tempo.
 func process(ctx context.Context, pool *pgxpool.Pool, deps module.Deps, bus *api.Bus, job *queue.Job, owner string) {
 	log.Printf("worker: job %d (%s) attempt %d owner %s", job.ID, job.Module, job.Attempts, owner)
+
+	claimedModel := modelFromInput(job.Input)
+	spanCtx, span := obs.Tracer.Start(context.Background(), "job", trace.WithNewRoot(),
+		trace.WithAttributes(
+			attribute.Int64("job.id", job.ID),
+			attribute.String("tier", job.Tier),
+			attribute.String("model", claimedModel),
+		))
+	defer span.End()
+	traceID := span.SpanContext().TraceID().String()
 
 	mod, ok := module.Get(job.Module)
 	if !ok {
@@ -103,10 +126,12 @@ func process(ctx context.Context, pool *pgxpool.Pool, deps module.Deps, bus *api
 		// attempts reach MaxAttempts, acceptable since an unknown module
 		// never becomes known between retries.
 		msg := fmt.Sprintf("unknown module %q", job.Module)
+		span.SetStatus(codes.Error, msg)
 		if err := queue.Fail(ctx, pool, job.ID, msg, owner); err != nil {
 			log.Printf("worker: job %d fail: %v", job.ID, err)
 			return
 		}
+		recordJobsTotal(spanCtx, job.Tier, claimedModel, "failed")
 		bus.Publish(job.ID, module.Event{Stage: "failed", Detail: msg})
 		return
 	}
@@ -131,9 +156,12 @@ func process(ctx context.Context, pool *pgxpool.Pool, deps module.Deps, bus *api
 
 	res, err := mod.Run(ctx, job.Input, deps, emit)
 	if err != nil {
-		failAndPublish(ctx, pool, bus, job, owner, err.Error())
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		failAndPublish(ctx, spanCtx, pool, bus, job, owner, claimedModel, err.Error())
 		return
 	}
+	span.SetAttributes(attribute.String("model", res.Run.Model))
 	if res.VideoTitle != "" || res.VideoDescription != "" {
 		if merr := queue.SetVideoMeta(ctx, pool, job.ID, res.VideoTitle, res.VideoDescription); merr != nil {
 			log.Printf("worker: job %d set video meta: %v", job.ID, merr)
@@ -144,12 +172,16 @@ func process(ctx context.Context, pool *pgxpool.Pool, deps module.Deps, bus *api
 	// retry never creates a duplicate row, and job_runs.transcript_sha256 only
 	// needs the row to exist by commit time, not to commit atomically with it.
 	if terr := store.SaveTranscript(ctx, pool, res.Transcript); terr != nil {
-		failAndPublish(ctx, pool, bus, job, owner, terr.Error())
+		span.RecordError(terr)
+		span.SetStatus(codes.Error, terr.Error())
+		failAndPublish(ctx, spanCtx, pool, bus, job, owner, res.Run.Model, terr.Error())
 		return
 	}
-	done, err := completeWithRun(ctx, pool, job, res, owner)
+	done, err := completeWithRun(ctx, pool, job, res, owner, traceID)
 	if err != nil {
-		failAndPublish(ctx, pool, bus, job, owner, err.Error())
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		failAndPublish(ctx, spanCtx, pool, bus, job, owner, res.Run.Model, err.Error())
 		return
 	}
 	if !done {
@@ -160,15 +192,62 @@ func process(ctx context.Context, pool *pgxpool.Pool, deps module.Deps, bus *api
 		log.Printf("worker: job %d completion fenced out (owner %s lost lease)", job.ID, owner)
 		return
 	}
+	recordJobMetrics(spanCtx, job.Tier, res.Run, res.Transcript)
+	recordJobsTotal(spanCtx, job.Tier, res.Run.Model, "done")
 	bus.Publish(job.ID, module.Event{Stage: "done"})
+}
+
+// modelFromInput best-effort extracts a "model" field from a job's raw input
+// JSON, for the span attribute recorded before the module resolves its
+// default model. Modules without a "model" input field, or malformed input,
+// yield "" - not an error, since this is only ever a best-effort attribute.
+func modelFromInput(input []byte) string {
+	var v struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(input, &v); err != nil {
+		return ""
+	}
+	return v.Model
+}
+
+// recordJobsTotal records one terminal job outcome. status is "done" or
+// "failed" - non-terminal retries are not counted here (queue.Fail's retry
+// path calls neither this nor recordJobMetrics).
+func recordJobsTotal(ctx context.Context, tier, model, status string) {
+	obs.Met.JobsTotal.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("tier", tier),
+		attribute.String("model", model),
+		attribute.String("status", status),
+	))
+}
+
+// recordJobMetrics records the per-job duration/throughput/cost histograms
+// on a successful completion.
+func recordJobMetrics(ctx context.Context, tier string, run store.Run, transcript store.Transcript) {
+	attrs := metric.WithAttributes(
+		attribute.String("model", run.Model),
+		attribute.String("tier", tier),
+		attribute.String("status", "done"),
+	)
+	obs.Met.SummaryDuration.Record(ctx, float64(run.SummarizeMs), attrs)
+	obs.Met.TokensPerSecond.Record(ctx, run.GenTokS, attrs)
+	if run.TranslateMs > 0 {
+		obs.Met.TranslateDuration.Record(ctx, float64(run.TranslateMs), attrs)
+	}
+	obs.Met.TranscriptChars.Record(ctx, float64(transcript.Chars), attrs)
+	obs.Met.Chunks.Record(ctx, float64(run.ChunkCount), attrs)
+	obs.Met.CostUSD.Record(ctx, run.SummarizeCostUSD+run.TranslateCostUSD, attrs)
 }
 
 // failAndPublish requeues (or terminally fails) the job and publishes the
 // matching SSE event. queue.Fail requeues while attempts remain; only the
 // terminal attempt parks the job as failed. A terminal "failed" is emitted
 // only then, so the web UI (which closes its SSE stream on "failed") keeps
-// streaming across auto-retries and sees "retrying" instead.
-func failAndPublish(ctx context.Context, pool *pgxpool.Pool, bus *api.Bus, job *queue.Job, owner, msg string) {
+// streaming across auto-retries and sees "retrying" instead. metricCtx is
+// the job span's context (see process); jobs_total is recorded only for the
+// terminal outcome, not for each in-progress retry.
+func failAndPublish(ctx, metricCtx context.Context, pool *pgxpool.Pool, bus *api.Bus, job *queue.Job, owner, model, msg string) {
 	if err := queue.Fail(ctx, pool, job.ID, msg, owner); err != nil {
 		log.Printf("worker: job %d fail: %v", job.ID, err)
 		return
@@ -176,6 +255,7 @@ func failAndPublish(ctx context.Context, pool *pgxpool.Pool, bus *api.Bus, job *
 	stage := "retrying"
 	if job.Attempts >= queue.MaxAttempts {
 		stage = "failed"
+		recordJobsTotal(metricCtx, job.Tier, model, stage)
 	}
 	bus.Publish(job.ID, module.Event{Stage: stage, Detail: msg})
 }
@@ -186,7 +266,7 @@ func failAndPublish(ctx context.Context, pool *pgxpool.Pool, bus *api.Bus, job *
 // store, and a fenced-out completion (done=false) rolls back the INSERT too
 // - a worker that lost its lease must not add a duplicate run row for a job
 // another worker is now (or already has) running.
-func completeWithRun(ctx context.Context, pool *pgxpool.Pool, job *queue.Job, res module.Result, owner string) (bool, error) {
+func completeWithRun(ctx context.Context, pool *pgxpool.Pool, job *queue.Job, res module.Result, owner, traceID string) (bool, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return false, err
@@ -199,8 +279,7 @@ func completeWithRun(ctx context.Context, pool *pgxpool.Pool, job *queue.Job, re
 	run := res.Run
 	run.JobID = job.ID
 	run.Tier = job.Tier
-	// TraceID awaits OTel wiring (spec section 7, a later task); left empty
-	// until job spans exist to record.
+	run.TraceID = traceID
 	m, found := catalog.Get(run.Model)
 	if !found {
 		log.Printf("worker: job %d: model %q not in catalog, recording zero cost/non-reproducible run", job.ID, run.Model)

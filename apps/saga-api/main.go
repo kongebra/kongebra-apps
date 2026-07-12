@@ -19,6 +19,7 @@ import (
 	"saga-api/internal/llm"
 	"saga-api/internal/module"
 	"saga-api/internal/module/ytsummary"
+	"saga-api/internal/obs"
 	"saga-api/internal/store"
 	"saga-api/internal/worker"
 	"saga-api/internal/ytdlp"
@@ -41,11 +42,22 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// otelShutdown flushes traces/metrics; called explicitly in the shutdown
+	// sequence below (after the worker drains, before the pool closes) so no
+	// telemetry from an in-flight job's final write is lost. Disabled (empty
+	// endpoint) path returns a no-op, so this never fails boot.
+	otelShutdown, err := obs.Setup(ctx, cfg.OTELEndpoint, version)
+	if err != nil {
+		log.Fatalf("otel setup: %v", err)
+	}
+
 	pool, err := db.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("db connect: %v", err)
 	}
-	defer pool.Close()
+	// pool.Close is called explicitly at the end of the shutdown sequence
+	// below (not deferred here) so it happens strictly after the worker has
+	// drained and OTel has flushed - a deferred Close would race both.
 	if err := db.Migrate(ctx, pool); err != nil {
 		log.Fatalf("db migrate: %v", err)
 	}
@@ -70,17 +82,50 @@ func main() {
 		},
 	}
 	bus := api.NewBus()
-	go worker.Run(ctx, pool, deps, bus, cfg.SAGACloudConcurrency)
+	// workerDone closes when worker.Run returns - which only happens once ctx
+	// is canceled AND its dispatch goroutines have drained in-flight jobs
+	// (worker.Run's own wg.Wait()). The shutdown sequence below waits on it
+	// so a job that is mid-write when SIGTERM arrives finishes its job_runs
+	// insert (and the span/metrics that describe it) before OTel flushes and
+	// the pool closes underneath it.
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		worker.Run(ctx, pool, deps, bus, cfg.SAGACloudConcurrency)
+	}()
 
 	srv := &http.Server{Addr: ":" + cfg.Port, Handler: api.New(pool, bus, deps.LLM, version)}
+	// shutdownComplete gates main's return on the full shutdown sequence, in
+	// order: HTTP server drains -> worker drains -> OTel flushes -> pool
+	// closes. Without this, main would fall through as soon as
+	// ListenAndServe returns (which happens as soon as the listener closes,
+	// not once the rest of this sequence finishes) and the process would
+	// exit mid-drain.
+	shutdownComplete := make(chan struct{})
 	go func() {
+		defer close(shutdownComplete)
 		<-ctx.Done()
+
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		srv.Shutdown(shutdownCtx)
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("http shutdown: %v", err)
+		}
+
+		<-workerDone
+
+		flushCtx, flushCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer flushCancel()
+		if err := otelShutdown(flushCtx); err != nil {
+			log.Printf("otel shutdown: %v", err)
+		}
+
+		pool.Close()
 	}()
+
 	log.Printf("saga-api %s listening on :%s (modules: %v)", version, cfg.Port, module.Names())
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
+	<-shutdownComplete
 }

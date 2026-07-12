@@ -20,6 +20,9 @@ type Config struct {
 	// SAGACloudConcurrency caps concurrent cloud-tier jobs. Local is always 1
 	// (single GPU); cloud can fan out since Ollama Cloud runs the model.
 	SAGACloudConcurrency int
+	// OTELEndpoint is the OTLP HTTP collector base URL (e.g.
+	// http://otel-lgtm.observability:4318). Empty disables OTel entirely.
+	OTELEndpoint string
 }
 
 func Load() Config {
@@ -34,6 +37,7 @@ func Load() Config {
 		WorkDir:              getenv("WORK_DIR", os.TempDir()),
 		ChunkTimeout:         getduration("CHUNK_TIMEOUT", 15*time.Minute),
 		SAGACloudConcurrency: getint("SAGA_CLOUD_CONCURRENCY", 3),
+		OTELEndpoint:         os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
 	}
 }
 
