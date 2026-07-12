@@ -95,20 +95,34 @@ func TestCompleteIsFencedByOwner(t *testing.T) {
 	if b == nil || b.ID != a.ID {
 		t.Fatal("expected re-claim of same job")
 	}
-	okA, err := CompleteOwned(ctx, pool, a.ID, "A-md", "owner-A")
-	if err != nil {
-		t.Fatal(err)
-	}
+	okA := completeOwnedTx(t, ctx, pool, a.ID, "A-md", "owner-A")
 	if okA {
 		t.Fatal("owner-A must be fenced out after rescue")
 	}
-	okB, err := CompleteOwned(ctx, pool, b.ID, "B-md", "owner-B")
-	if err != nil {
-		t.Fatal(err)
-	}
+	okB := completeOwnedTx(t, ctx, pool, b.ID, "B-md", "owner-B")
 	if !okB {
 		t.Fatal("owner-B should complete")
 	}
+}
+
+// completeOwnedTx is the test-only wrapper that runs CompleteOwnedTx inside
+// its own transaction (as the worker does in completeWithRun), since
+// production code never calls it outside a caller-managed transaction.
+func completeOwnedTx(t *testing.T, ctx context.Context, pool *pgxpool.Pool, id int64, markdown, owner string) bool {
+	t.Helper()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	ok, err := CompleteOwnedTx(ctx, tx, id, markdown, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	return ok
 }
 
 func TestFailRequeuesUntilMaxAttempts(t *testing.T) {
@@ -186,12 +200,9 @@ func TestCompleteAndFailOnlyAffectRunning(t *testing.T) {
 	if err != nil || job == nil {
 		t.Fatalf("claim: job=%+v err=%v", job, err)
 	}
-	ok, err := CompleteOwned(ctx, pool, job.ID, "the result", "w1")
-	if err != nil {
-		t.Fatal(err)
-	}
+	ok := completeOwnedTx(t, ctx, pool, job.ID, "the result", "w1")
 	if !ok {
-		t.Fatal("CompleteOwned must affect the running job")
+		t.Fatal("CompleteOwnedTx must affect the running job")
 	}
 	got, _ := Get(ctx, pool, id)
 	if got.Status != "done" || got.ResultMarkdown == nil || *got.ResultMarkdown != "the result" {
@@ -210,12 +221,9 @@ func TestCompleteAndFailOnlyAffectRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	okC, err := CompleteOwned(ctx, pool, job2.ID, "should not land", "w1")
-	if err != nil {
-		t.Fatal(err)
-	}
+	okC := completeOwnedTx(t, ctx, pool, job2.ID, "should not land", "w1")
 	if okC {
-		t.Fatal("CompleteOwned must be a no-op on a non-running job")
+		t.Fatal("CompleteOwnedTx must be a no-op on a non-running job")
 	}
 	got2, _ := Get(ctx, pool, id2)
 	if got2.Status != "queued" || got2.ResultMarkdown != nil {

@@ -56,7 +56,7 @@ func testServerWithLLM(t *testing.T, llmClient *llm.Client) (*httptest.Server, *
 	}
 	module.Register(echoModule{})
 	bus := NewBus()
-	srv := httptest.NewServer(New(pool, bus, llmClient, "test"))
+	srv := httptest.NewServer(New(pool, bus, llmClient, "test", "gemma4:e4b"))
 	t.Cleanup(srv.Close)
 	return srv, pool, bus
 }

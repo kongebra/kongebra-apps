@@ -17,18 +17,20 @@ import (
 	"saga-api/internal/summarize"
 )
 
-// defaultTranslateModel is the model used for the translate endpoint - same
-// small model the worker uses, since translation is a short single-pass call.
-const defaultTranslateModel = "gemma4:e4b"
-
 type server struct {
-	pool *pgxpool.Pool
-	bus  *Bus
-	llm  llm.Provider
+	pool           *pgxpool.Pool
+	bus            *Bus
+	llm            llm.Provider
+	translateModel string
 }
 
-func New(pool *pgxpool.Pool, bus *Bus, llmClient llm.Provider, version string) http.Handler {
-	s := &server{pool: pool, bus: bus, llm: llmClient}
+// New wires the HTTP API. translateModel is the model the interactive
+// /translate endpoint uses - it must be the same configured model the
+// auto-translate pipeline uses (cfg.TranslateModel, boot-resolved in main.go
+// including its no-API-key fallback), so the two paths never diverge in
+// translation quality.
+func New(pool *pgxpool.Pool, bus *Bus, llmClient llm.Provider, version, translateModel string) http.Handler {
+	s := &server{pool: pool, bus: bus, llm: llmClient, translateModel: translateModel}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "ok %s", version)
@@ -245,7 +247,7 @@ func (s *server) translate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"translated_markdown": *job.TranslatedMarkdown})
 		return
 	}
-	res, err := s.llm.Chat(r.Context(), defaultTranslateModel, summarize.TranslatePrompt(req.Lang, *job.ResultMarkdown), llm.ChatOptions{Temperature: 0.2}, nil)
+	res, err := s.llm.Chat(r.Context(), s.translateModel, summarize.TranslatePrompt(req.Lang, *job.ResultMarkdown), llm.ChatOptions{Temperature: llm.DefaultTemperature}, nil)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

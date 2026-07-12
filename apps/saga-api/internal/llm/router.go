@@ -7,6 +7,11 @@ import (
 	"time"
 )
 
+// DefaultTemperature is the temperature every summarize/translate call sends,
+// so the value recorded in job_runs.temperature can never drift from what
+// was actually sent to the model.
+const DefaultTemperature = 0.2
+
 // ChatOptions are the per-call knobs plumbed into the ollama request.
 type ChatOptions struct {
 	Temperature float64

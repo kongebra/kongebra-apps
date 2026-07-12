@@ -107,7 +107,7 @@ func (Module) Run(ctx context.Context, raw json.RawMessage, deps module.Deps, em
 	chat := func(prompt string, onToken func(string)) (string, error) {
 		callCtx, cancel := context.WithTimeout(ctx, deps.ChunkTimeout)
 		defer cancel()
-		res, err := deps.LLM.Chat(callCtx, in.Model, prompt, llm.ChatOptions{Temperature: 0.2, Seed: fixedSeed}, onToken)
+		res, err := deps.LLM.Chat(callCtx, in.Model, prompt, llm.ChatOptions{Temperature: llm.DefaultTemperature, Seed: fixedSeed}, onToken)
 		inTok += res.InputTokens
 		outTok += res.OutputTokens
 		evalDur += res.EvalDuration
@@ -154,7 +154,7 @@ func (Module) Run(ctx context.Context, raw json.RawMessage, deps module.Deps, em
 		PromptVersion:  summarize.PromptVersion,
 		ChunkCount:     chunkCount,
 		ResultMarkdown: summary,
-		Temperature:    0.2,
+		Temperature:    llm.DefaultTemperature,
 		Seed:           fixedSeed,
 		InputTokens:    inTok,
 		OutputTokens:   outTok,
@@ -173,7 +173,10 @@ func (Module) Run(ctx context.Context, raw json.RawMessage, deps module.Deps, em
 		emit(module.Event{Stage: "translating"})
 		translateStart := time.Now()
 		translateCtx, cancel := context.WithTimeout(ctx, deps.ChunkTimeout)
-		tr, terr := deps.LLM.Chat(translateCtx, deps.TranslateModel, summarize.TranslatePrompt("no", summary), llm.ChatOptions{Temperature: 0.2, Seed: fixedSeed}, nil)
+		// Translate tokens are intentionally excluded from run.InputTokens/
+		// OutputTokens - those two fields track the summarize-artifact metrics
+		// only, not this pass.
+		tr, terr := deps.LLM.Chat(translateCtx, deps.TranslateModel, summarize.TranslatePrompt("no", summary), llm.ChatOptions{Temperature: llm.DefaultTemperature, Seed: fixedSeed}, nil)
 		cancel()
 		if terr != nil {
 			return module.Result{}, fmt.Errorf("translate: %w", terr)

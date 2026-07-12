@@ -91,21 +91,13 @@ func SetProgress(ctx context.Context, pool *pgxpool.Pool, id int64, progress, ow
 	return err
 }
 
-// CompleteOwned marks the job done, fenced by owner. It returns true only when
-// it affected the row: false means the caller was fenced out (the job was
-// rescued and reclaimed by another worker), so the caller must NOT publish a
-// stale terminal event. This is the guard against a double-run writing twice.
-func CompleteOwned(ctx context.Context, pool *pgxpool.Pool, id int64, markdown, owner string) (bool, error) {
-	tag, err := pool.Exec(ctx, `
-		UPDATE jobs SET status = 'done', result_markdown = $2,
-			finished_at = now(), error = NULL, progress = ''
-		WHERE id = $1 AND status = 'running' AND lease_owner = $3`, id, markdown, owner)
-	return tag.RowsAffected() == 1, err
-}
-
-// CompleteOwnedTx mirrors CompleteOwned but runs inside a caller-managed
-// transaction, so completion commits atomically with the job_runs INSERT the
-// worker writes alongside it: either both land, or neither does.
+// CompleteOwnedTx marks the job done, fenced by owner, inside a caller-managed
+// transaction so completion commits atomically with the job_runs INSERT the
+// worker writes alongside it: either both land, or neither does. It returns
+// true only when it affected the row: false means the caller was fenced out
+// (the job was rescued and reclaimed by another worker), so the caller must
+// NOT publish a stale terminal event. This is the guard against a double-run
+// writing twice.
 func CompleteOwnedTx(ctx context.Context, tx pgx.Tx, id int64, markdown, owner string) (bool, error) {
 	tag, err := tx.Exec(ctx, `
 		UPDATE jobs SET status = 'done', result_markdown = $2,

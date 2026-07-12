@@ -266,15 +266,22 @@ func failAndPublish(ctx, metricCtx context.Context, pool *pgxpool.Pool, bus *api
 // store, and a fenced-out completion (done=false) rolls back the INSERT too
 // - a worker that lost its lease must not add a duplicate run row for a job
 // another worker is now (or already has) running.
+//
+// The transaction runs on writeCtx = context.WithoutCancel(ctx), not ctx
+// itself: ctx is the worker's shutdown-aware context, canceled on SIGTERM,
+// and a job that has already produced a result must be allowed to commit
+// that result even mid-shutdown - only the LLM call earlier in process()
+// should be cut short by shutdown, not this final write.
 func completeWithRun(ctx context.Context, pool *pgxpool.Pool, job *queue.Job, res module.Result, owner, traceID string) (bool, error) {
-	tx, err := pool.Begin(ctx)
+	writeCtx := context.WithoutCancel(ctx)
+	tx, err := pool.Begin(writeCtx)
 	if err != nil {
 		return false, err
 	}
 	// Backstop for the commit-failure path: if tx.Commit below fails, this
 	// releases the pooled connection. A Rollback after a successful Commit is
 	// a harmless no-op (returns an already-closed-tx error we ignore).
-	defer tx.Rollback(ctx)
+	defer tx.Rollback(writeCtx)
 
 	run := res.Run
 	run.JobID = job.ID
@@ -288,18 +295,18 @@ func completeWithRun(ctx context.Context, pool *pgxpool.Pool, job *queue.Job, re
 	run.Reproducible = m.Tier == "local"
 
 	done := false
-	if err = store.InsertRun(ctx, tx, run); err == nil {
-		done, err = queue.CompleteOwnedTx(ctx, tx, job.ID, res.Markdown, owner)
+	if err = store.InsertRun(writeCtx, tx, run); err == nil {
+		done, err = queue.CompleteOwnedTx(writeCtx, tx, job.ID, res.Markdown, owner)
 	}
 
 	if err != nil || !done {
-		if rerr := tx.Rollback(ctx); rerr != nil {
+		if rerr := tx.Rollback(writeCtx); rerr != nil {
 			log.Printf("worker: job %d rollback: %v", job.ID, rerr)
 		}
 		return false, err
 	}
 
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(writeCtx); err != nil {
 		return false, err
 	}
 	return true, nil
