@@ -158,6 +158,9 @@ func TestRunMetrics(t *testing.T) {
 	if res.Transcript.Sha256 == "" {
 		t.Error("Transcript.Sha256 is empty, want a content hash")
 	}
+	if want := len("short transcript"); res.Transcript.Chars != want {
+		t.Errorf("Transcript.Chars = %d, want %d", res.Transcript.Chars, want)
+	}
 }
 
 // poisonFetcher fails the test if Fetch is ever called - used to prove a

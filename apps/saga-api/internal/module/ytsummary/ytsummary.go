@@ -188,8 +188,10 @@ func (Module) Run(ctx context.Context, raw json.RawMessage, deps module.Deps, em
 	transcript := store.Transcript{
 		Text:   v.Transcript,
 		Sha256: store.Sha256(v.Transcript),
-		// ytdlp.Video does not currently expose caption language/source, so
-		// these are left empty rather than invented.
+		Chars:  len(v.Transcript),
+		// Tokens is left 0 - no tokenizer is wired up here. ytdlp.Video does
+		// not currently expose caption language/source, so Lang/Source are
+		// left empty rather than invented.
 	}
 	run.TranscriptSha256 = transcript.Sha256
 

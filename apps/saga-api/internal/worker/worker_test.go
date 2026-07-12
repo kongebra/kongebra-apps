@@ -89,11 +89,39 @@ func TestProcessCompletesJob(t *testing.T) {
 	if last.Stage != "done" {
 		t.Errorf("last event: %+v", last)
 	}
+	// A normal (non-fenced) completion must write exactly one job_runs row.
+	// This is the counterpart to TestProcessFencedOutDoesNotComplete's zero-row
+	// assertion: together they prove the row count actually tracks the fence,
+	// rather than the INSERT simply never succeeding either way.
+	assertJobRunsCount(t, ctx, pool, id, 1)
+}
+
+// assertJobRunsCount asserts the number of job_runs rows recorded for a job.
+// Shared by TestProcessCompletesJob (must be 1) and
+// TestProcessFencedOutDoesNotComplete (must be 0) to guard the invariant the
+// completeWithRun transaction exists for: a fenced-out completion must never
+// leave a job_runs row behind (it is written and committed atomically with
+// the job's own completion, in the SAME transaction - a rollback on fence-out
+// rolls back both).
+func assertJobRunsCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, jobID int64, want int) {
+	t.Helper()
+	var got int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM job_runs WHERE job_id = $1`, jobID).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("job_runs count for job %d: got %d, want %d", jobID, got, want)
+	}
 }
 
 // TestProcessFencedOutDoesNotComplete proves the double-run guard at the worker
 // level: a worker whose job was rescued and reclaimed by another owner must not
-// write a done result nor publish a terminal "done".
+// write a done result nor publish a terminal "done". Critically, it must also
+// not leave a job_runs row behind (completeWithRun writes job_runs and
+// completes the job in one transaction specifically so a fenced-out attempt
+// rolls back both) - a future refactor that committed the job_runs INSERT
+// before or outside that transaction would pass every other assertion here
+// while silently doubling the eval store.
 func TestProcessFencedOutDoesNotComplete(t *testing.T) {
 	module.Register(okModule{})
 	ctx := context.Background()
@@ -115,6 +143,7 @@ func TestProcessFencedOutDoesNotComplete(t *testing.T) {
 	if got.LeaseOwner == nil || *got.LeaseOwner != "other-worker" {
 		t.Fatalf("fence owner clobbered: %+v", got)
 	}
+	assertJobRunsCount(t, ctx, pool, id, 0)
 }
 
 func TestProcessFailsJob(t *testing.T) {
