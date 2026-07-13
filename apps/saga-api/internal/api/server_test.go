@@ -51,7 +51,7 @@ func testServerWithLLM(t *testing.T, llmClient *llm.Client) (*httptest.Server, *
 	}
 	module.Register(echoModule{})
 	bus := NewBus()
-	srv := httptest.NewServer(New(pool, bus, llmClient, "test", "gemma4:e4b"))
+	srv := httptest.NewServer(New(pool, bus, llmClient, "test", "gemma4:e4b", false))
 	t.Cleanup(srv.Close)
 	return srv, pool, bus
 }
@@ -174,13 +174,18 @@ func TestGetModels(t *testing.T) {
 		t.Fatalf("status %d, want 200", resp.StatusCode)
 	}
 	var out struct {
-		Models []map[string]any `json:"models"`
+		Models       []map[string]any `json:"models"`
+		CloudEnabled bool             `json:"cloud_enabled"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatal(err)
 	}
 	if len(out.Models) == 0 {
 		t.Fatal("models array is empty")
+	}
+	// testServer wires no cloud key -> cloud_enabled must be false.
+	if out.CloudEnabled {
+		t.Error("cloud_enabled should be false when no key configured")
 	}
 	found := false
 	for _, m := range out.Models {

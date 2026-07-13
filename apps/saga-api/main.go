@@ -94,7 +94,7 @@ func main() {
 		worker.Run(ctx, pool, deps, bus, cfg.SAGACloudConcurrency)
 	}()
 
-	srv := &http.Server{Addr: ":" + cfg.Port, Handler: api.New(pool, bus, deps.LLM, version, cfg.TranslateModel)}
+	srv := &http.Server{Addr: ":" + cfg.Port, Handler: api.New(pool, bus, deps.LLM, version, cfg.TranslateModel, cfg.OllamaAPIKey != "")}
 	// shutdownComplete gates main's return on the full shutdown sequence, in
 	// order: HTTP server drains -> worker drains -> OTel flushes -> pool
 	// closes. Without this, main would fall through as soon as

@@ -22,6 +22,7 @@ type server struct {
 	bus            *Bus
 	llm            llm.Provider
 	translateModel string
+	cloudEnabled   bool
 }
 
 // New wires the HTTP API. translateModel is the model the interactive
@@ -29,8 +30,8 @@ type server struct {
 // auto-translate pipeline uses (cfg.TranslateModel, boot-resolved in main.go
 // including its no-API-key fallback), so the two paths never diverge in
 // translation quality.
-func New(pool *pgxpool.Pool, bus *Bus, llmClient llm.Provider, version, translateModel string) http.Handler {
-	s := &server{pool: pool, bus: bus, llm: llmClient, translateModel: translateModel}
+func New(pool *pgxpool.Pool, bus *Bus, llmClient llm.Provider, version, translateModel string, cloudEnabled bool) http.Handler {
+	s := &server{pool: pool, bus: bus, llm: llmClient, translateModel: translateModel, cloudEnabled: cloudEnabled}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "ok %s", version)
@@ -43,7 +44,10 @@ func New(pool *pgxpool.Pool, bus *Bus, llmClient llm.Provider, version, translat
 	mux.HandleFunc("POST /api/jobs/{id}/translate", s.translate)
 	mux.HandleFunc("GET /api/events", s.events)
 	mux.HandleFunc("GET /api/models", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"models": catalog.All()})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"models":        catalog.All(),
+			"cloud_enabled": s.cloudEnabled,
+		})
 	})
 	return mux
 }
