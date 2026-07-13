@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -16,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"saga-api/internal/db"
+	"saga-api/internal/dbtest"
 	"saga-api/internal/llm"
 	"saga-api/internal/module"
 	"saga-api/internal/store"
@@ -38,16 +38,11 @@ func testServer(t *testing.T) (*httptest.Server, *pgxpool.Pool, *Bus) {
 
 func testServerWithLLM(t *testing.T, llmClient *llm.Client) (*httptest.Server, *pgxpool.Pool, *Bus) {
 	t.Helper()
-	url := os.Getenv("TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("TEST_DATABASE_URL not set")
-	}
 	ctx := context.Background()
-	pool, err := db.Connect(ctx, url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
+	// dbtest gives this package its own database so go test ./...'s default
+	// parallel-package execution never races another package's TRUNCATE
+	// against this package's assertions.
+	pool := dbtest.Pool(t, "api")
 	if err := db.Migrate(ctx, pool); err != nil {
 		t.Fatal(err)
 	}

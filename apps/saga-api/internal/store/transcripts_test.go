@@ -2,30 +2,26 @@ package store_test
 
 import (
 	"context"
-	"os"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"saga-api/internal/db"
+	"saga-api/internal/dbtest"
 	"saga-api/internal/store"
 )
 
+// testPool gives this package its own database (see internal/dbtest) so
+// go test ./...'s default parallel-package execution never races another
+// package's TRUNCATE against this package's assertions. Shared by every
+// _test.go file in package store_test.
 func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	url := os.Getenv("TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("TEST_DATABASE_URL not set")
-	}
 	ctx := context.Background()
-	pool, err := db.Connect(ctx, url)
-	if err != nil {
-		t.Fatal(err)
-	}
+	pool := dbtest.Pool(t, "store")
 	if err := db.Migrate(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(pool.Close)
 	return pool
 }
 

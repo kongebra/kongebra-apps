@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
 	"testing"
 	"time"
 
@@ -12,6 +11,7 @@ import (
 
 	"saga-api/internal/api"
 	"saga-api/internal/db"
+	"saga-api/internal/dbtest"
 	"saga-api/internal/module"
 	"saga-api/internal/queue"
 )
@@ -33,18 +33,14 @@ func (failModule) Run(ctx context.Context, in json.RawMessage, d module.Deps, em
 	return module.Result{}, errors.New("kaboom")
 }
 
+// testPool gives this package its own database (see internal/dbtest) so
+// go test ./...'s default parallel-package execution never races another
+// package's TRUNCATE against this package's assertions, then truncates
+// jobs so each test in this package still starts from a clean slate.
 func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	url := os.Getenv("TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("TEST_DATABASE_URL not set")
-	}
 	ctx := context.Background()
-	pool, err := db.Connect(ctx, url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
+	pool := dbtest.Pool(t, "worker")
 	if err := db.Migrate(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
