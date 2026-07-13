@@ -45,6 +45,10 @@ export function Composer({
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
+    if (!sel.modelId) {
+      setErr("Modellkatalogen er ikke lastet enda. Prøv igjen om et øyeblikk.")
+      return
+    }
     setSubmitting(true)
     setErr(null)
     try {
@@ -84,6 +88,7 @@ export function Composer({
           ref={inputRef}
           type="url"
           required
+          aria-label="YouTube-URL"
           placeholder="Lim inn en YouTube-URL"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
@@ -114,7 +119,7 @@ export function Composer({
         <span className="text-muted-foreground">
           Modell: <span className="text-foreground">{selectedLabel}</span>
         </span>
-        <ModelPicker models={models} value={sel.modelId} onChange={setModel} />
+        <ModelPicker models={models} value={sel.modelId} cloudEnabled={cloudEnabled} onChange={setModel} />
       </div>
 
       {err && <p className="text-sm text-destructive">{err}</p>}

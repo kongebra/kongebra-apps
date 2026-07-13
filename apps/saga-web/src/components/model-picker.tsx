@@ -5,14 +5,17 @@ import { byTier } from "@/lib/catalog"
 import { Meter } from "@/components/meter"
 import { cn } from "@/lib/utils"
 
-function Row({ m, selected, onPick }: { m: Model; selected: boolean; onPick: () => void }) {
+function Row({ m, selected, disabled, onPick }: { m: Model; selected: boolean; disabled?: boolean; onPick: () => void }) {
   return (
     <button
       type="button"
       onClick={onPick}
+      disabled={disabled}
+      title={disabled ? "Sky ikke konfigurert" : m.note}
       className={cn(
         "flex w-full items-center gap-3 rounded-md border-l-2 border-transparent px-3 py-2 text-left transition-colors hover:bg-accent",
         selected && "border-l-[var(--brand)] bg-accent",
+        disabled && "cursor-not-allowed opacity-40 hover:bg-transparent",
       )}
     >
       <span className="flex min-w-0 flex-1 flex-col">
@@ -40,15 +43,17 @@ function Row({ m, selected, onPick }: { m: Model; selected: boolean; onPick: () 
 export function ModelPicker({
   models,
   value,
+  cloudEnabled,
   onChange,
 }: {
   models: Model[]
   value: string
+  cloudEnabled: boolean
   onChange: (id: string) => void
 }) {
-  const groups: { key: string; label: string; rows: Model[] }[] = [
-    { key: "local", label: "Lokal", rows: byTier(models, "local") },
-    { key: "cloud", label: "Sky", rows: byTier(models, "cloud") },
+  const groups: { key: string; label: string; rows: Model[]; disabled: boolean }[] = [
+    { key: "local", label: "Lokal", rows: byTier(models, "local"), disabled: false },
+    { key: "cloud", label: "Sky", rows: byTier(models, "cloud"), disabled: !cloudEnabled },
   ]
   return (
     <Popover.Root>
@@ -64,12 +69,19 @@ export function ModelPicker({
           <p className="px-3 pb-1 pt-1 text-xs text-muted-foreground">Fart / Presisjon (1-4)</p>
           {groups.map((g) => (
             <div key={g.key} className="mb-1">
-              <p className="px-3 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{g.label}</p>
-              {g.rows.map((m) => (
-                <Popover.Close asChild key={m.id}>
-                  <Row m={m} selected={m.id === value} onPick={() => onChange(m.id)} />
-                </Popover.Close>
-              ))}
+              <p className="px-3 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {g.label}
+                {g.disabled && <span className="ml-2 font-normal normal-case text-muted-foreground">Sky ikke konfigurert</span>}
+              </p>
+              {g.rows.map((m) =>
+                g.disabled ? (
+                  <Row key={m.id} m={m} selected={m.id === value} disabled onPick={() => {}} />
+                ) : (
+                  <Popover.Close asChild key={m.id}>
+                    <Row m={m} selected={m.id === value} onPick={() => onChange(m.id)} />
+                  </Popover.Close>
+                ),
+              )}
             </div>
           ))}
         </Popover.Content>

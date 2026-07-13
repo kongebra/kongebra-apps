@@ -1,6 +1,6 @@
 import { createFileRoute, Outlet, useNavigate, useRouter } from "@tanstack/react-router"
 import { createServerFn } from "@tanstack/react-start"
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import type { Job, JobStatus } from "../types"
 import type { Model } from "@/lib/catalog"
 import { fetchModels } from "@/lib/catalog"
@@ -43,8 +43,21 @@ function DashLayout() {
   const [highlightId, setHighlightId] = useState<number | null>(null)
   const [models, setModels] = useState<Model[]>([])
   const [cloudEnabled, setCloudEnabled] = useState(true)
+  const [modelsError, setModelsError] = useState(false)
   const [filter, setFilter] = useState<Filter>("all")
   const [q, setQ] = useState("")
+  const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // The just-submitted highlight is a brief cue, not a persistent selection:
+  // clear it after a moment (and on unmount) so the ring never sticks.
+  function highlight(id: number) {
+    setHighlightId(id)
+    if (highlightTimer.current) clearTimeout(highlightTimer.current)
+    highlightTimer.current = setTimeout(() => setHighlightId(null), 2500)
+  }
+  useEffect(() => () => {
+    if (highlightTimer.current) clearTimeout(highlightTimer.current)
+  }, [])
 
   // Server loader reruns on router.invalidate; keep local state in sync and
   // drop optimistic rows the server now knows about.
@@ -58,8 +71,9 @@ function DashLayout() {
       .then((r) => {
         setModels(r.models)
         setCloudEnabled(r.cloudEnabled)
+        setModelsError(false)
       })
-      .catch(() => {})
+      .catch(() => setModelsError(true))
   }, [])
 
   useEffect(() => {
@@ -93,9 +107,14 @@ function DashLayout() {
             cloudEnabled={cloudEnabled}
             onOptimistic={(job) => {
               setOptimistic((o) => [job, ...o])
-              setHighlightId(job.id)
+              highlight(job.id)
             }}
           />
+          {modelsError && (
+            <p className="mx-auto mt-3 max-w-2xl text-center text-sm text-destructive">
+              Kunne ikke laste modellkatalogen. Sjekk at saga-api svarer, og last siden på nytt.
+            </p>
+          )}
         </section>
 
         {hasJobs && (
@@ -105,6 +124,7 @@ function DashLayout() {
                 <button
                   key={f.key}
                   type="button"
+                  aria-pressed={filter === f.key}
                   onClick={() => setFilter(f.key)}
                   className={cn(
                     "rounded-full border px-3 py-1 text-sm transition-colors",

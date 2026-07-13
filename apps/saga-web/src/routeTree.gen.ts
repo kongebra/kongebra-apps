@@ -10,53 +10,58 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as HealthRouteImport } from './routes/health'
-import { Route as IndexRouteImport } from './routes/index'
-import { Route as JobsIdRouteImport } from './routes/jobs.$id'
+import { Route as DashRouteImport } from './routes/_dash'
+import { Route as DashIndexRouteImport } from './routes/_dash.index'
+import { Route as DashJobsIdRouteImport } from './routes/_dash.jobs.$id'
 
 const HealthRoute = HealthRouteImport.update({
   id: '/health',
   path: '/health',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const DashRoute = DashRouteImport.update({
+  id: '/_dash',
   getParentRoute: () => rootRouteImport,
 } as any)
-const JobsIdRoute = JobsIdRouteImport.update({
+const DashIndexRoute = DashIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => DashRoute,
+} as any)
+const DashJobsIdRoute = DashJobsIdRouteImport.update({
   id: '/jobs/$id',
   path: '/jobs/$id',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => DashRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
+  '/': typeof DashIndexRoute
   '/health': typeof HealthRoute
-  '/jobs/$id': typeof JobsIdRoute
+  '/jobs/$id': typeof DashJobsIdRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
   '/health': typeof HealthRoute
-  '/jobs/$id': typeof JobsIdRoute
+  '/': typeof DashIndexRoute
+  '/jobs/$id': typeof DashJobsIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
+  '/_dash': typeof DashRouteWithChildren
   '/health': typeof HealthRoute
-  '/jobs/$id': typeof JobsIdRoute
+  '/_dash/': typeof DashIndexRoute
+  '/_dash/jobs/$id': typeof DashJobsIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths: '/' | '/health' | '/jobs/$id'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/health' | '/jobs/$id'
-  id: '__root__' | '/' | '/health' | '/jobs/$id'
+  to: '/health' | '/' | '/jobs/$id'
+  id: '__root__' | '/_dash' | '/health' | '/_dash/' | '/_dash/jobs/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
+  DashRoute: typeof DashRouteWithChildren
   HealthRoute: typeof HealthRoute
-  JobsIdRoute: typeof JobsIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -68,27 +73,45 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof HealthRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
+    '/_dash': {
+      id: '/_dash'
+      path: ''
       fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+      preLoaderRoute: typeof DashRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/jobs/$id': {
-      id: '/jobs/$id'
+    '/_dash/': {
+      id: '/_dash/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof DashIndexRouteImport
+      parentRoute: typeof DashRoute
+    }
+    '/_dash/jobs/$id': {
+      id: '/_dash/jobs/$id'
       path: '/jobs/$id'
       fullPath: '/jobs/$id'
-      preLoaderRoute: typeof JobsIdRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof DashJobsIdRouteImport
+      parentRoute: typeof DashRoute
     }
   }
 }
 
+interface DashRouteChildren {
+  DashIndexRoute: typeof DashIndexRoute
+  DashJobsIdRoute: typeof DashJobsIdRoute
+}
+
+const DashRouteChildren: DashRouteChildren = {
+  DashIndexRoute: DashIndexRoute,
+  DashJobsIdRoute: DashJobsIdRoute,
+}
+
+const DashRouteWithChildren = DashRoute._addFileChildren(DashRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
+  DashRoute: DashRouteWithChildren,
   HealthRoute: HealthRoute,
-  JobsIdRoute: JobsIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
