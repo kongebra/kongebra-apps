@@ -42,7 +42,7 @@ func New(pool *pgxpool.Pool, bus *Bus, llmClient llm.Provider, version, translat
 	mux.HandleFunc("POST /api/jobs/{id}/rerun", s.rerunJob)
 	mux.HandleFunc("POST /api/jobs/{id}/translate", s.translate)
 	mux.HandleFunc("GET /api/events", s.events)
-	mux.HandleFunc("GET /models", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /api/models", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"models": catalog.All()})
 	})
 	return mux

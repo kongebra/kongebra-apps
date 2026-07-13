@@ -165,7 +165,7 @@ func TestEventsStreamSnapshotThenLive(t *testing.T) {
 
 func TestGetModels(t *testing.T) {
 	srv, _, _ := testServer(t)
-	resp, err := http.Get(srv.URL + "/models")
+	resp, err := http.Get(srv.URL + "/api/models")
 	if err != nil {
 		t.Fatal(err)
 	}

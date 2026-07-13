@@ -1,6 +1,6 @@
 // Package catalog is the single source of truth for the model list: tiers,
 // Norwegian capability (drives conditional translate), the UI meter ratings,
-// and per-model price. The API serves it (GET /models) so the web app never
+// and per-model price. The API serves it (GET /api/models) so the web app never
 // keeps its own copy. ponytail: a static slice, not a DB table; make it a
 // table only if models need editing without a redeploy.
 package catalog
