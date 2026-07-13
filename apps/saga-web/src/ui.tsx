@@ -8,14 +8,21 @@ import { useTheme } from "./theme"
 import { cn } from "@/lib/utils"
 
 const STATUS_STYLE: Record<JobStatus, string> = {
-  queued: "bg-muted text-muted-foreground",
-  running: "bg-blue-500 text-white",
-  done: "bg-green-600 text-white",
-  failed: "bg-destructive text-white",
+  queued: "bg-[var(--status-queued)] text-white",
+  running: "bg-[var(--status-running)] text-white",
+  done: "bg-[var(--status-done)] text-white",
+  failed: "bg-[var(--status-failed)] text-white",
+}
+
+const STATUS_LABEL: Record<JobStatus, string> = {
+  queued: "I kø",
+  running: "Kjører",
+  done: "Ferdig",
+  failed: "Feilet",
 }
 
 export function StatusPill({ status }: { status: JobStatus }) {
-  return <Badge className={cn("capitalize", STATUS_STYLE[status])}>{status}</Badge>
+  return <Badge className={cn(STATUS_STYLE[status])}>{STATUS_LABEL[status]}</Badge>
 }
 
 export function Shell({ children }: { children: ReactNode }) {
