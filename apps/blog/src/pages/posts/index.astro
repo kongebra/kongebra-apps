@@ -1,0 +1,30 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import PostCard from "../../components/PostCard.astro";
+import { getPosts } from "../../lib/posts.ts";
+
+const posts = await getPosts();
+---
+
+<BaseLayout title="Writing" description="Every post - homelab, k3s, GitOps and self-hosting field notes.">
+  <div class="container">
+    <h1>Writing</h1>
+    <p class="lede">{posts.length} post{posts.length === 1 ? "" : "s"} on running a real homelab.</p>
+    {posts.map((post, i) => (
+      <PostCard
+        slug={post.id}
+        title={post.data.title}
+        description={post.data.description}
+        pubDate={post.data.pubDate}
+        tags={post.data.tags}
+        minutes={post.minutes}
+        index={i}
+      />
+    ))}
+  </div>
+</BaseLayout>
+
+<style>
+  h1 { font-size: clamp(2rem, 5vw, 2.8rem); margin: 0 0 0.5rem; }
+  .lede { color: var(--c-muted); margin: 0 0 1rem; }
+</style>

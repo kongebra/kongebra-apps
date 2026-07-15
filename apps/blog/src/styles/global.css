@@ -1,0 +1,197 @@
+@import "tailwindcss";
+
+/* Self-hosted variable fonts (bundled, no CDN -> no third-party requests, no CLS). */
+@import "@fontsource-variable/schibsted-grotesk";
+@import "@fontsource-variable/source-serif-4";
+@import "@fontsource-variable/jetbrains-mono";
+
+/* Dark mode driven by [data-theme="dark"] on <html> (set pre-paint, see BaseHead). */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* --- Theme tokens ---------------------------------------------------------
+   Nordic editorial: warm paper + deep ink, single aurora-green accent. */
+:root {
+  --c-bg: #faf9f5;
+  --c-surface: #ffffff;
+  --c-text: #1b1a17;
+  --c-muted: #6b6a63;
+  --c-border: #e7e4dc;
+  --c-accent: #0e8c6b;
+  --c-accent-contrast: #ffffff;
+  --c-code-bg: #f5f3ec;
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --c-bg: #0e1113;
+  --c-surface: #14181b;
+  --c-text: #e8e6e0;
+  --c-muted: #9a988f;
+  --c-border: #23282c;
+  --c-accent: #3fd9ae;
+  --c-accent-contrast: #0e1113;
+  --c-code-bg: #14181b;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --font-display: "Schibsted Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-body: "Source Serif 4 Variable", Georgia, "Times New Roman", serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "SFMono-Regular", monospace;
+
+  --color-bg: var(--c-bg);
+  --color-surface: var(--c-surface);
+  --color-text: var(--c-text);
+  --color-muted: var(--c-muted);
+  --color-border: var(--c-border);
+  --color-accent: var(--c-accent);
+  --color-accent-contrast: var(--c-accent-contrast);
+}
+
+/* --- Base ----------------------------------------------------------------- */
+html {
+  font-family: var(--font-body);
+  background: var(--c-bg);
+  color: var(--c-text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  line-height: 1.7;
+}
+
+/* A whisper of aurora at the very top of the page - the one signature flourish. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--c-accent), transparent);
+  opacity: 0.7;
+  z-index: 50;
+  pointer-events: none;
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.12;
+  text-wrap: balance;
+}
+
+a {
+  color: inherit;
+  text-decoration-color: color-mix(in oklab, var(--c-accent) 55%, transparent);
+  text-underline-offset: 3px;
+}
+a:hover { text-decoration-color: var(--c-accent); }
+
+::selection { background: color-mix(in oklab, var(--c-accent) 30%, transparent); }
+
+:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+/* Monospace metadata: the technical-hub signature (dates, tags, reading time). */
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  color: var(--c-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Long-form article prose ---------------------------------------------- */
+.prose { font-size: 1.075rem; }
+.prose > * + * { margin-top: 1.15em; }
+.prose h2 { margin-top: 2.2em; font-size: 1.6rem; }
+.prose h3 { margin-top: 1.8em; font-size: 1.25rem; }
+.prose h2 a, .prose h3 a { text-decoration: none; }
+.prose a { color: var(--c-accent); }
+.prose ul, .prose ol { padding-left: 1.3em; }
+.prose li + li { margin-top: 0.35em; }
+.prose blockquote {
+  border-left: 2px solid var(--c-accent);
+  padding-left: 1em;
+  color: var(--c-muted);
+  font-style: italic;
+}
+.prose img { border-radius: 8px; border: 1px solid var(--c-border); }
+.prose :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  background: var(--c-code-bg);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  border: 1px solid var(--c-border);
+}
+.prose pre {
+  font-family: var(--font-mono);
+  padding: 1rem 1.15rem;
+  border-radius: 10px;
+  border: 1px solid var(--c-border);
+  overflow-x: auto;
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+.prose pre code { background: none; border: none; padding: 0; }
+
+/* Shiki dual theme: swap the CSS variables Shiki inlined when dark is active. */
+[data-theme="dark"] .astro-code,
+[data-theme="dark"] .astro-code span {
+  color: var(--shiki-dark) !important;
+  background-color: var(--shiki-dark-bg) !important;
+  font-style: var(--shiki-dark-font-style) !important;
+  font-weight: var(--shiki-dark-font-weight) !important;
+  text-decoration: var(--shiki-dark-text-decoration) !important;
+}
+
+/* Skip-to-content: hidden until keyboard focus, then pinned top-left (sticky header makes this matter). */
+.skip-link {
+  position: absolute;
+  left: 0.75rem;
+  top: -3rem;
+  z-index: 100;
+  background: var(--c-accent);
+  color: var(--c-accent-contrast);
+  padding: 0.5rem 0.9rem;
+  border-radius: 0 0 8px 8px;
+  font-family: var(--font-display);
+  font-size: 0.9rem;
+  text-decoration: none;
+  transition: top 0.15s;
+}
+.skip-link:focus { top: 0; }
+main:focus { outline: none; }
+
+/* Copy button injected into each code block (see BaseLayout). */
+.copy-btn {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--c-muted);
+  background: var(--c-bg);
+  border: 1px solid var(--c-border);
+  border-radius: 5px;
+  padding: 0.2rem 0.5rem;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+}
+.prose pre:hover .copy-btn,
+.copy-btn:focus-visible { opacity: 1; }
+.copy-btn:hover { color: var(--c-accent); border-color: var(--c-accent); }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}

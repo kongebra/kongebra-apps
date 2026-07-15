@@ -1,0 +1,64 @@
+---
+import BaseHead from "../components/BaseHead.astro";
+import Header from "../components/Header.astro";
+import Footer from "../components/Footer.astro";
+import { SITE } from "../consts.ts";
+
+interface Props {
+  title?: string;
+  description?: string;
+  image?: string;
+  type?: "website" | "article";
+  publishedTime?: Date;
+  modifiedTime?: Date;
+  jsonLd?: unknown[];
+}
+const { title = SITE.title, ...head } = Astro.props;
+---
+
+<!doctype html>
+<html lang={SITE.lang}>
+  <head>
+    <BaseHead title={title} {...head} />
+  </head>
+  <body>
+    <a href="#main" class="skip-link">Skip to content</a>
+    <Header />
+    <main id="main" tabindex="-1">
+      <slot />
+    </main>
+    <Footer />
+    <script is:inline>
+      // Progressive enhancement: add a copy button to every code block. No framework, no deps.
+      for (const pre of document.querySelectorAll("main pre")) {
+        pre.style.position = "relative";
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "copy-btn";
+        btn.textContent = "Copy";
+        btn.setAttribute("aria-label", "Copy code to clipboard");
+        btn.addEventListener("click", async () => {
+          try {
+            await navigator.clipboard.writeText(pre.innerText);
+            btn.textContent = "Copied";
+            setTimeout(() => (btn.textContent = "Copy"), 1500);
+          } catch {
+            btn.textContent = "Failed";
+          }
+        });
+        pre.appendChild(btn);
+      }
+    </script>
+  </body>
+</html>
+
+<style is:global>
+  main {
+    padding: 2.5rem 1.5rem 0;
+  }
+  /* Standard reading column for list/index pages. Post pages use their own grid. */
+  .container {
+    max-width: 46rem;
+    margin: 0 auto;
+  }
+</style>

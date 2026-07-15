@@ -1,0 +1,46 @@
+name: blog PR
+
+on:
+  pull_request:
+    paths:
+      - "apps/blog/**"
+      - ".github/workflows/blog-pr.yml"
+      - ".github/actions/docker-build/**"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/blog
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.9
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        run: bun test
+
+      - name: Build
+        run: bun run build
+
+      - name: Build image without pushing
+        uses: ./.github/actions/docker-build
+        with:
+          app_dir: apps/blog
+          image: ghcr.io/kongebra/blog
+          tag: pr-${{ github.sha }}
+          push: false
