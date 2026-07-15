@@ -27,4 +27,7 @@ jobs:
       app_dir: apps/blog
       image: ghcr.io/kongebra/blog
       image_tag: ${{ github.event.inputs.image_tag || '' }}
+      # Static personal blog: low blast radius, content-only changes, instant tag-rollback.
+      # Skip the prod reviewer gate -> push to main auto-promotes dev + prod.
+      require_prod_approval: false
     secrets: inherit
