@@ -45,7 +45,10 @@ func leaseTimeout(chunk time.Duration) time.Duration { return chunk + 5*time.Min
 // holding a lease (which would freeze its heartbeat and let RequeueStale
 // double-run it). cloudSlots caps concurrent cloud jobs; local is always 1.
 func Run(ctx context.Context, pool *pgxpool.Pool, deps module.Deps, bus *api.Bus, cloudSlots int) {
-	local := make(chan struct{}, 1)
+	// Two local GPU boxes behind LiteLLM (round-robin); LiteLLM caps each box at
+	// 1 in-flight, so 2 concurrent local jobs land one per box. (Was 1 when saga
+	// spoke to a single box directly.)
+	local := make(chan struct{}, 2)
 	cloud := make(chan struct{}, cloudSlots)
 	var wg sync.WaitGroup
 	t := time.NewTicker(pollInterval)

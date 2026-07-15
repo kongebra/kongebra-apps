@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -35,17 +33,20 @@ func (hangingFetcher) Fetch(ctx context.Context, url, lang string) (ytdlp.Video,
 	return ytdlp.Video{}, ctx.Err()
 }
 
-// fakeLLM answers every chat with a canned string, in ollama-native NDJSON
-// /api/chat format.
-func fakeLLM(t *testing.T, reply string) *llm.Client {
+// cannedLLM is a Provider fake: every Chat streams then returns a canned reply.
+type cannedLLM struct{ reply string }
+
+func (c cannedLLM) Chat(_ context.Context, _, _ string, _ llm.ChatOptions, onToken func(string)) (llm.ChatResult, error) {
+	if onToken != nil && c.reply != "" {
+		onToken(c.reply)
+	}
+	return llm.ChatResult{Text: c.reply, InputTokens: 5, OutputTokens: 7, WallClock: time.Millisecond}, nil
+}
+
+// fakeLLM returns a Provider that answers every chat with reply.
+func fakeLLM(t *testing.T, reply string) llm.Provider {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/x-ndjson")
-		fmt.Fprintf(w, "{\"message\":{\"content\":%q}}\n", reply)
-		fmt.Fprint(w, "{\"done\":true}\n")
-	}))
-	t.Cleanup(srv.Close)
-	return llm.New(srv.URL)
+	return cannedLLM{reply: reply}
 }
 
 func deps(t *testing.T, f ytdlp.Fetcher, reply string) module.Deps {

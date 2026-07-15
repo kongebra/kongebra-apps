@@ -1,6 +1,20 @@
 package summarize
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+func TestCleanMathStripsThink(t *testing.T) {
+	in := "<think>let me reason\nstep by step</think>\n# Summary\n\n- point"
+	got := CleanMath(in)
+	if strings.Contains(got, "reason") || strings.Contains(got, "<think>") {
+		t.Errorf("think block not stripped: %q", got)
+	}
+	if !strings.Contains(got, "# Summary") {
+		t.Errorf("summary content lost: %q", got)
+	}
+}
 
 func TestCleanMath(t *testing.T) {
 	cases := []struct{ in, want string }{

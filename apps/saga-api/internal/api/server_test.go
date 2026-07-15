@@ -33,10 +33,10 @@ func (echoModule) Run(ctx context.Context, in json.RawMessage, d module.Deps, em
 // client that no test in this file exercises. Tests that hit the translate
 // endpoint use testServerWithLLM instead, pointed at a fake.
 func testServer(t *testing.T) (*httptest.Server, *pgxpool.Pool, *Bus) {
-	return testServerWithLLM(t, llm.New("http://unused"))
+	return testServerWithLLM(t, cannedLLM{})
 }
 
-func testServerWithLLM(t *testing.T, llmClient *llm.Client) (*httptest.Server, *pgxpool.Pool, *Bus) {
+func testServerWithLLM(t *testing.T, llmClient llm.Provider) (*httptest.Server, *pgxpool.Pool, *Bus) {
 	t.Helper()
 	ctx := context.Background()
 	// dbtest gives this package its own database so go test ./...'s default
@@ -56,17 +56,20 @@ func testServerWithLLM(t *testing.T, llmClient *llm.Client) (*httptest.Server, *
 	return srv, pool, bus
 }
 
-// fakeLLM answers every chat with a canned string, in ollama-native NDJSON
-// /api/chat format (same pattern as internal/module/ytsummary's fakeLLM).
-func fakeLLM(t *testing.T, reply string) *llm.Client {
+// cannedLLM is a Provider fake: every Chat streams then returns a canned reply.
+type cannedLLM struct{ reply string }
+
+func (c cannedLLM) Chat(_ context.Context, _, _ string, _ llm.ChatOptions, onToken func(string)) (llm.ChatResult, error) {
+	if onToken != nil && c.reply != "" {
+		onToken(c.reply)
+	}
+	return llm.ChatResult{Text: c.reply, InputTokens: 5, OutputTokens: 7, WallClock: time.Millisecond}, nil
+}
+
+// fakeLLM returns a Provider that answers every chat with reply.
+func fakeLLM(t *testing.T, reply string) llm.Provider {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/x-ndjson")
-		fmt.Fprintf(w, "{\"message\":{\"content\":%q}}\n", reply)
-		fmt.Fprint(w, "{\"done\":true}\n")
-	}))
-	t.Cleanup(srv.Close)
-	return llm.New(srv.URL)
+	return cannedLLM{reply: reply}
 }
 
 func postJob(t *testing.T, srv *httptest.Server, body string) *http.Response {

@@ -35,9 +35,18 @@ var cmdRe = regexp.MustCompile(`\\(rightarrow|leftrightarrow|Leftrightarrow|Righ
 // signs (prices) untouched because the class requires a math symbol between.
 var wrapRe = regexp.MustCompile(`\${1,2}\s*([\x{2190}-\x{21ff}\x{00d7}\x{00b7}\x{00b1}\x{2248}\x{2264}\x{2265}\x{2260}\x{2026}])\s*\${1,2}`)
 
-// CleanMath replaces LaTeX math commands with Unicode and unwraps the leftover
-// $...$ delimiters around single symbols.
+// Reasoning models may inline <think>...</think> before the answer. Thinking is
+// disabled at the LiteLLM gateway for local models, but a cloud reasoning model
+// could still emit a stray block - strip it (including an unterminated trailing
+// one) before math normalization.
+var thinkRe = regexp.MustCompile(`(?s)<think>.*?</think>\s*`)
+var thinkOpenRe = regexp.MustCompile(`(?s)<think>.*$`)
+
+// CleanMath strips <think> blocks, replaces LaTeX math commands with Unicode,
+// and unwraps the leftover $...$ delimiters around single symbols.
 func CleanMath(s string) string {
+	s = thinkRe.ReplaceAllString(s, "")
+	s = thinkOpenRe.ReplaceAllString(s, "")
 	s = cmdRe.ReplaceAllStringFunc(s, func(m string) string {
 		return mathCmd[m[1:]] // drop leading backslash
 	})
