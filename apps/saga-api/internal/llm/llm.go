@@ -1,14 +1,13 @@
-// Package llm speaks ollama-native chat streaming (POST /api/chat, NDJSON
-// frames) to an Ollama backend. Both the local GPU and Ollama Cloud expose
-// the same wire shape, so one Client serves both: they differ only by base
-// URL, an optional bearer key, and whether calls are serialized. The local
-// box is one GPU, one model loaded, so its Client carries an n=1 semaphore
-// that serializes calls app-wide; callers release it between map-reduce
-// chunks, which is what lets a future interactive module cut in line at
-// chunk boundaries. Cloud calls take no semaphore (cloud runs many at once).
-// A Router (router.go) picks the Client per model.
-// ponytail: hand-rolled ollama-native client (~100 lines) instead of an SDK;
-// swap for an SDK if we ever need tools/images/logprobs.
+// Package llm speaks the OpenAI-compatible chat-completions streaming API to
+// the in-cluster LiteLLM gateway, which fans out to the two Ollama boxes
+// (round-robin) and Ollama Cloud. One Client serves every model - the gateway
+// routes by model name. tok/s is wall-clock: the OpenAI wire carries token
+// counts (via stream_options.include_usage) but not Ollama's native
+// eval_duration, so ChatResult.EvalDuration stays 0 and callers fall back to
+// WallClock. Local-GPU serialization moved into LiteLLM (max_parallel_requests
+// per deployment), so this Client carries no app-wide semaphore.
+// ponytail: hand-rolled SSE parse instead of an SDK; swap for the openai-go SDK
+// if we ever need tools/images/logprobs.
 package llm
 
 import (
@@ -23,72 +22,70 @@ import (
 	"time"
 )
 
+// DefaultTemperature is the temperature every summarize/translate call sends,
+// so the value recorded in job_runs.temperature can never drift from what
+// was actually sent to the model.
+const DefaultTemperature = 0.2
+
+// ChatOptions are the per-call knobs. Think/NumCtx are Ollama-native and do not
+// survive the OpenAI boundary; they are unused (thinking is disabled at the
+// gateway via litellm_params). Kept in the struct so callers/records are stable.
+type ChatOptions struct {
+	Temperature float64
+	Seed        int
+	Think       bool
+	NumCtx      int
+}
+
+// ChatResult is one completed chat: the text plus the metrics needed for the
+// eval store. EvalDuration is always 0 over the OpenAI wire (no native timing);
+// tok/s uses WallClock as the denominator (see ytsummary.go).
+type ChatResult struct {
+	Text         string
+	InputTokens  int
+	OutputTokens int
+	EvalDuration time.Duration
+	LoadDuration time.Duration
+	WallClock    time.Duration
+}
+
+// Provider is the seam every LLM backend implements. Modules call this; the
+// concrete backend is the LiteLLM client below.
+type Provider interface {
+	Chat(ctx context.Context, model, prompt string, opts ChatOptions, onToken func(string)) (ChatResult, error)
+}
+
 type Client struct {
-	baseURL string
-	bearer  string // Authorization: Bearer <bearer>; empty = no auth (local)
+	baseURL string // includes /v1
+	apiKey  string
 	httpc   *http.Client
-	sem     chan struct{} // nil = no app-wide serialization (cloud)
 }
 
-// New builds a client for the local single-GPU Ollama: no auth header, and an
-// n=1 semaphore that serializes every call app-wide.
-func New(baseURL string) *Client {
-	return &Client{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		httpc:   &http.Client{}, // per-call deadline comes from ctx
-		sem:     make(chan struct{}, 1),
-	}
+// New builds a client for the LiteLLM gateway. baseURL includes the /v1 suffix;
+// apiKey is the virtual key (empty allowed for an unauthenticated test server).
+func New(baseURL, apiKey string) *Client {
+	return &Client{baseURL: strings.TrimRight(baseURL, "/"), apiKey: apiKey, httpc: &http.Client{}}
 }
 
-// NewCloud builds a client for Ollama Cloud: bearer auth, and NO semaphore -
-// cloud runs many calls concurrently, so serializing it would needlessly block
-// cloud work behind a local job (the whole point of adding cloud).
-func NewCloud(baseURL, apiKey string) *Client {
-	return &Client{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		bearer:  apiKey,
-		httpc:   &http.Client{},
-	}
-}
-
-// apiOptions is the "options" object in the ollama /api/chat request body.
-type apiOptions struct {
-	Temperature float64 `json:"temperature"`
-	Seed        int     `json:"seed"`
-	NumCtx      int     `json:"num_ctx,omitempty"`
-}
-
-// Chat sends one user prompt, streams tokens to onToken (nil ok), returns
-// the assembled response plus token/duration metrics. Cancellation/timeout
-// via ctx.
 func (c *Client) Chat(ctx context.Context, model, prompt string, opts ChatOptions, onToken func(string)) (ChatResult, error) {
-	if c.sem != nil {
-		select {
-		case c.sem <- struct{}{}:
-			defer func() { <-c.sem }()
-		case <-ctx.Done():
-			return ChatResult{}, ctx.Err()
-		}
-	}
-
 	body, err := json.Marshal(map[string]any{
-		"model":    model,
-		"stream":   true,
-		"think":    opts.Think,
-		"messages": []map[string]string{{"role": "user", "content": prompt}},
-		"options":  apiOptions{Temperature: opts.Temperature, Seed: opts.Seed, NumCtx: opts.NumCtx},
+		"model":          model,
+		"stream":         true,
+		"stream_options": map[string]any{"include_usage": true},
+		"temperature":    opts.Temperature,
+		"seed":           opts.Seed,
+		"messages":       []map[string]string{{"role": "user", "content": prompt}},
 	})
 	if err != nil {
 		return ChatResult{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.baseURL+"/api/chat", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return ChatResult{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if c.bearer != "" {
-		req.Header.Set("Authorization", "Bearer "+c.bearer)
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 
 	resp, err := c.httpc.Do(req)
@@ -98,7 +95,7 @@ func (c *Client) Chat(ctx context.Context, model, prompt string, opts ChatOption
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return ChatResult{}, fmt.Errorf("ollama: %s: %s", resp.Status, strings.TrimSpace(string(b)))
+		return ChatResult{}, fmt.Errorf("litellm: %s: %s", resp.Status, strings.TrimSpace(string(b)))
 	}
 
 	start := time.Now()
@@ -109,43 +106,49 @@ func (c *Client) Chat(ctx context.Context, model, prompt string, opts ChatOption
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
-		if line == "" {
+		if !strings.HasPrefix(line, "data:") {
 			continue
+		}
+		payload := strings.TrimSpace(line[len("data:"):])
+		if payload == "[DONE]" {
+			sawDone = true
+			break
 		}
 		var frame struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-			Done            bool  `json:"done"`
-			EvalCount       int   `json:"eval_count"`
-			EvalDuration    int64 `json:"eval_duration"`
-			PromptEvalCount int   `json:"prompt_eval_count"`
-			LoadDuration    int64 `json:"load_duration"`
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+			} `json:"choices"`
+			Usage *struct {
+				PromptTokens     int `json:"prompt_tokens"`
+				CompletionTokens int `json:"completion_tokens"`
+			} `json:"usage"`
 		}
-		if err := json.Unmarshal([]byte(line), &frame); err != nil {
+		if err := json.Unmarshal([]byte(payload), &frame); err != nil {
 			continue
 		}
-		if frame.Message.Content != "" {
-			sb.WriteString(frame.Message.Content)
+		if len(frame.Choices) > 0 && frame.Choices[0].Delta.Content != "" {
+			tok := frame.Choices[0].Delta.Content
+			sb.WriteString(tok)
 			if onToken != nil {
-				onToken(frame.Message.Content)
+				onToken(tok)
 			}
 		}
-		if frame.Done {
-			res.OutputTokens = frame.EvalCount
-			res.InputTokens = frame.PromptEvalCount
-			res.EvalDuration = time.Duration(frame.EvalDuration)
-			res.LoadDuration = time.Duration(frame.LoadDuration)
-			sawDone = true
+		// Usage rides a trailing choices-empty frame (stream_options.include_usage).
+		if frame.Usage != nil {
+			res.InputTokens = frame.Usage.PromptTokens
+			res.OutputTokens = frame.Usage.CompletionTokens
 		}
 	}
 	if err := sc.Err(); err != nil {
 		return ChatResult{}, err
 	}
 	if !sawDone {
-		return ChatResult{}, fmt.Errorf("ollama: stream ended before done frame")
+		return ChatResult{}, fmt.Errorf("litellm: stream ended before [DONE]")
 	}
 	res.Text = sb.String()
 	res.WallClock = time.Since(start)
+	// EvalDuration/LoadDuration intentionally 0: not carried by the OpenAI wire.
 	return res, nil
 }

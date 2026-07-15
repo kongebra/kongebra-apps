@@ -1,19 +1,24 @@
 // saga-api is the backend for saga.kongebra.no: a Postgres-backed job queue
-// plus modules that summarize content with Ollama - the local GPU by default,
-// or Ollama Cloud when the model is a cloud tag and an API key is configured.
-// Design: docs/superpowers/specs/2026-07-04-saga-platform-design.md.
+// plus modules that summarize content via the in-cluster LiteLLM gateway, which
+// fans out to the two local Ollama GPU boxes (round-robin) and Ollama Cloud
+// behind one OpenAI-compatible endpoint.
+// Design: docs/superpowers/specs/2026-07-04-saga-platform-design.md +
+// docs/superpowers/specs/2026-07-13-litellm-gateway-design.md.
 package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"saga-api/internal/api"
+	"saga-api/internal/catalog"
 	"saga-api/internal/config"
 	"saga-api/internal/db"
 	"saga-api/internal/llm"
@@ -32,12 +37,6 @@ func main() {
 	cfg := config.Load()
 	if cfg.DatabaseURL == "" {
 		log.Fatal("DATABASE_URL is required")
-	}
-	// The default translate model is a cloud tag; without an API key it is
-	// unreachable, so fall back to a local Norwegian-capable model at boot
-	// (not mid-pipeline) so translate keeps working offline.
-	if cfg.OllamaAPIKey == "" {
-		cfg.TranslateModel = "gemma4:e4b"
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -64,16 +63,20 @@ func main() {
 
 	module.Register(ytsummary.Module{})
 
-	// Local GPU always; Ollama Cloud only when an API key is configured.
-	// The Router picks per model: cloud tags (":cloud"/"-cloud") go to cloud.
-	var cloud llm.Provider
-	if cfg.OllamaAPIKey != "" {
-		cloud = llm.NewCloud(cfg.OllamaCloudURL, cfg.OllamaAPIKey)
+	// All LLM traffic goes through the in-cluster LiteLLM gateway (one OpenAI
+	// endpoint; it fans out to the two Ollama boxes + Ollama Cloud by model name).
+	llmClient := llm.New(cfg.LiteLLMURL, cfg.LiteLLMAPIKey)
+	// cloudEnabled drives the frontend Turbo gate: probe the gateway for a live
+	// cloud-tier model rather than trusting a static flag. If cloud is
+	// unreachable the pinned cloud translate model is unusable, so fall back to
+	// a local Norwegian-capable model at boot (not mid-pipeline).
+	cloudEnabled := probeCloud(ctx, cfg.LiteLLMURL, cfg.LiteLLMAPIKey)
+	if !cloudEnabled {
+		cfg.TranslateModel = "gemma4:e4b"
 	}
-	router := llm.NewRouter(llm.New(cfg.OllamaURL), cloud)
 
 	deps := module.Deps{
-		LLM:            router,
+		LLM:            llmClient,
 		Fetcher:        ytdlp.Exec{Bin: cfg.YtdlpPath, WorkDir: cfg.WorkDir},
 		ChunkTimeout:   cfg.ChunkTimeout,
 		TranslateModel: cfg.TranslateModel,
@@ -94,7 +97,7 @@ func main() {
 		worker.Run(ctx, pool, deps, bus, cfg.SAGACloudConcurrency)
 	}()
 
-	srv := &http.Server{Addr: ":" + cfg.Port, Handler: api.New(pool, bus, deps.LLM, version, cfg.TranslateModel, cfg.OllamaAPIKey != "")}
+	srv := &http.Server{Addr: ":" + cfg.Port, Handler: api.New(pool, bus, deps.LLM, version, cfg.TranslateModel, cloudEnabled)}
 	// shutdownComplete gates main's return on the full shutdown sequence, in
 	// order: HTTP server drains -> worker drains -> OTel flushes -> pool
 	// closes. Without this, main would fall through as soon as
@@ -128,4 +131,41 @@ func main() {
 		log.Fatal(err)
 	}
 	<-shutdownComplete
+}
+
+// probeCloud reports whether the LiteLLM gateway currently serves any cloud-tier
+// catalog model. Drives the frontend Turbo gate honestly (vs a static env that
+// drifts from reachability). Best-effort: any error -> false.
+func probeCloud(ctx context.Context, baseURL, apiKey string) bool {
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/models", nil)
+	if err != nil {
+		return false
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	var body struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return false
+	}
+	for _, m := range body.Data {
+		if cm, ok := catalog.Get(m.ID); ok && cm.Tier == "cloud" {
+			return true
+		}
+	}
+	return false
 }

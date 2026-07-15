@@ -8,15 +8,14 @@ import (
 func TestLoadDefaults(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://x")
 	t.Setenv("PORT", "")
-	t.Setenv("OLLAMA_URL", "")
-	t.Setenv("OLLAMA_CLOUD_URL", "")
-	t.Setenv("OLLAMA_API_KEY", "")
+	t.Setenv("LITELLM_URL", "")
+	t.Setenv("LITELLM_API_KEY", "")
 	cfg := Load()
 	if cfg.Port != "8080" {
 		t.Errorf("Port = %q, want 8080", cfg.Port)
 	}
-	if cfg.OllamaURL != "http://100.125.242.93:11434" {
-		t.Errorf("OllamaURL = %q", cfg.OllamaURL)
+	if cfg.LiteLLMURL != "http://litellm.litellm.svc:4000/v1" {
+		t.Errorf("LiteLLMURL = %q", cfg.LiteLLMURL)
 	}
 	if cfg.ChunkTimeout != 15*time.Minute {
 		t.Errorf("ChunkTimeout = %v", cfg.ChunkTimeout)
@@ -24,24 +23,21 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.YtdlpPath != "yt-dlp" {
 		t.Errorf("YtdlpPath = %q", cfg.YtdlpPath)
 	}
-	if cfg.OllamaCloudURL != "https://ollama.com" {
-		t.Errorf("OllamaCloudURL = %q", cfg.OllamaCloudURL)
-	}
-	if cfg.OllamaAPIKey != "" {
-		t.Errorf("OllamaAPIKey = %q, want empty (cloud disabled by default)", cfg.OllamaAPIKey)
+	if cfg.LiteLLMAPIKey != "" {
+		t.Errorf("LiteLLMAPIKey = %q, want empty by default", cfg.LiteLLMAPIKey)
 	}
 }
 
-func TestLoadCloudOverrides(t *testing.T) {
+func TestLoadLiteLLMOverrides(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://x")
-	t.Setenv("OLLAMA_CLOUD_URL", "https://example.test")
-	t.Setenv("OLLAMA_API_KEY", "sk-123")
+	t.Setenv("LITELLM_URL", "http://example.test/v1")
+	t.Setenv("LITELLM_API_KEY", "sk-123")
 	cfg := Load()
-	if cfg.OllamaCloudURL != "https://example.test" {
-		t.Errorf("OllamaCloudURL = %q", cfg.OllamaCloudURL)
+	if cfg.LiteLLMURL != "http://example.test/v1" {
+		t.Errorf("LiteLLMURL = %q", cfg.LiteLLMURL)
 	}
-	if cfg.OllamaAPIKey != "sk-123" {
-		t.Errorf("OllamaAPIKey = %q", cfg.OllamaAPIKey)
+	if cfg.LiteLLMAPIKey != "sk-123" {
+		t.Errorf("LiteLLMAPIKey = %q", cfg.LiteLLMAPIKey)
 	}
 }
 
