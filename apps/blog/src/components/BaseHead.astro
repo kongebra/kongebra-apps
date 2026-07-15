@@ -69,6 +69,11 @@ const fullTitle = title === SITE.title ? `${SITE.title} - ${SITE.tagline}` : `${
   <script type="application/ld+json" is:inline set:html={JSON.stringify(obj).replace(/</g, "\\u003c")} />
 ))}
 
+{/* Self-hosted Umami analytics. Loads from the PUBLIC tracker host (umami.klyngo.no serves
+    /script.js + /api/send), NOT the tailnet-only admin host. No SRI: self-hosted + version-updates
+    in place, no third-party CDN in the trust path. CSP opened to this origin in server.mjs. */}
+<script defer is:inline src="https://umami.klyngo.no/script.js" data-website-id="007bb91d-0d3f-4fb3-9bc0-de4a389cb54f"></script>
+
 <!-- Set theme before first paint to avoid a flash of the wrong theme (the only inline JS). -->
 <script is:inline>
   (() => {

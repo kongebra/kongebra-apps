@@ -27,8 +27,9 @@ const types = {
 // ponytail: 'unsafe-inline' for script-src covers the two tiny inline theme scripts (pre-paint
 // no-flash + toggle). Upgrade path: emit sha256 hashes or a nonce and drop 'unsafe-inline'.
 const csp =
-  "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
-  "img-src 'self' data:; font-src 'self' data:; connect-src 'self'; base-uri 'self'; " +
+  "default-src 'self'; script-src 'self' 'unsafe-inline' https://umami.klyngo.no; " +
+  "style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; " +
+  "connect-src 'self' https://umami.klyngo.no; base-uri 'self'; " +
   "object-src 'none'; form-action 'self'; frame-ancestors 'none'";
 
 const securityHeaders = {
