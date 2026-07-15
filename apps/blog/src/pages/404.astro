@@ -1,0 +1,20 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+---
+
+<BaseLayout title="Not found" description="This page does not exist.">
+  <div class="container wrap">
+    <p class="mono code">404</p>
+    <h1>This page wandered off the tailnet.</h1>
+    <p class="lede">The link is broken or the page moved.</p>
+    <a class="home" href="/">← Back home</a>
+  </div>
+</BaseLayout>
+
+<style>
+  .wrap { padding: 4rem 0; text-align: center; }
+  .code { font-size: 1rem; letter-spacing: 0.3em; color: var(--c-accent); }
+  h1 { font-size: clamp(1.8rem, 5vw, 2.6rem); margin: 0.5rem 0; }
+  .lede { color: var(--c-muted); }
+  .home { display: inline-block; margin-top: 1.5rem; font-family: var(--font-display); color: var(--c-accent); text-decoration: none; }
+</style>

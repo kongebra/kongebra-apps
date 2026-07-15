@@ -1,0 +1,30 @@
+name: blog
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/blog/**"
+      - ".github/workflows/blog.yml"
+      - ".github/workflows/_build-deploy.yml"
+      - ".github/actions/gitops-promote/**"
+      - ".github/actions/docker-build/**"
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Existing immutable image tag to promote. Empty builds the current revision."
+        required: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/_build-deploy.yml
+    with:
+      app: blog
+      app_dir: apps/blog
+      image: ghcr.io/kongebra/blog
+      image_tag: ${{ github.event.inputs.image_tag || '' }}
+    secrets: inherit

@@ -1,0 +1,58 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import PostCard from "../components/PostCard.astro";
+import { getPosts } from "../lib/posts.ts";
+import { SITE } from "../consts.ts";
+
+const posts = await getPosts();
+const latest = posts.slice(0, 8);
+---
+
+<BaseLayout>
+  <div class="container">
+    <section class="intro">
+      <h1>{SITE.tagline}.</h1>
+      <p>{SITE.description}</p>
+    </section>
+
+    <section aria-label="Latest posts">
+      <p class="section-title mono">Latest posts</p>
+      {latest.map((post, i) => (
+        <PostCard
+          slug={post.id}
+          title={post.data.title}
+          description={post.data.description}
+          pubDate={post.data.pubDate}
+          tags={post.data.tags}
+          minutes={post.minutes}
+          index={i}
+        />
+      ))}
+      {posts.length === 0 && <p class="empty">No posts yet. The first one is being written.</p>}
+      {posts.length > latest.length && (
+        <a class="all" href="/posts/">All posts <span aria-hidden="true">→</span></a>
+      )}
+    </section>
+  </div>
+</BaseLayout>
+
+<style>
+  .intro { margin-bottom: 3rem; }
+  .intro h1 { font-size: clamp(2.1rem, 6vw, 3.2rem); margin: 0 0 1rem; }
+  .intro p { font-size: 1.2rem; color: var(--c-muted); max-width: 38rem; margin: 0; }
+  .section-title {
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    border-top: 1px solid var(--c-border);
+    padding-top: 1.5rem;
+    margin: 0;
+  }
+  .empty { color: var(--c-muted); padding: 2rem 0; }
+  .all {
+    display: inline-block;
+    margin-top: 2rem;
+    font-family: var(--font-display);
+    color: var(--c-accent);
+    text-decoration: none;
+  }
+</style>

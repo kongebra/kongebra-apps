@@ -1,0 +1,42 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import { getPosts } from "../../lib/posts.ts";
+
+const posts = await getPosts();
+const counts = new Map<string, number>();
+for (const p of posts) for (const t of p.data.tags) counts.set(t, (counts.get(t) ?? 0) + 1);
+const tags = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+---
+
+<BaseLayout title="Tags" description="Browse posts by topic.">
+  <div class="container">
+    <h1>Tags</h1>
+    <ul class="cloud">
+      {tags.map(([tag, n]) => (
+        <li>
+          <a href={`/tags/${tag}/`}>#{tag} <span class="mono n">{n}</span></a>
+        </li>
+      ))}
+    </ul>
+    {tags.length === 0 && <p class="empty">No tags yet.</p>}
+  </div>
+</BaseLayout>
+
+<style>
+  h1 { font-size: clamp(2rem, 5vw, 2.8rem); margin: 0 0 1.5rem; }
+  .cloud { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 0.7rem; }
+  .cloud a {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    border: 1px solid var(--c-border);
+    border-radius: 999px;
+    padding: 0.4rem 0.9rem;
+    text-decoration: none;
+    font-family: var(--font-display);
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .cloud a:hover { border-color: var(--c-accent); color: var(--c-accent); }
+  .n { color: var(--c-muted); }
+  .empty { color: var(--c-muted); }
+</style>

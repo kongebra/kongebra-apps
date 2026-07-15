@@ -1,0 +1,39 @@
+---
+import { SITE } from "../consts.ts";
+const year = new Date().getFullYear();
+---
+
+<footer>
+  <div class="wrap">
+    <span class="mono">{SITE.title} · {year}</span>
+    <span class="links">
+      <a href="/rss.xml">RSS</a>
+      <a href="/sitemap-index.xml">Sitemap</a>
+    </span>
+  </div>
+</footer>
+
+<style>
+  footer {
+    border-top: 1px solid var(--c-border);
+    margin-top: 5rem;
+  }
+  .wrap {
+    max-width: 46rem;
+    margin: 0 auto;
+    padding: 1.6rem 1.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  .links { display: flex; gap: 1.1rem; }
+  .links a {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--c-muted);
+    text-decoration: none;
+  }
+  .links a:hover { color: var(--c-accent); }
+</style>

@@ -1,0 +1,87 @@
+---
+title: "A personal developer platform on k3s and Hetzner"
+description: "How I turned three cheap Hetzner boxes into a private, GitOps-driven platform - HA control plane, public ingress without opening a port, and the sharp edges I hit on the way."
+pubDate: 2026-07-15
+tags: ["k3s", "hetzner", "gitops", "homelab"]
+draft: false
+---
+
+Every developer eventually wants a place to run their own things.
+Not a managed PaaS with a monthly bill that grows with your curiosity - a real cluster you own, where breaking things teaches you how production actually works.
+
+This is the shape of the platform I run: three Hetzner boxes, k3s in HA, everything deployed through GitOps, and a public blog (this one) served without opening a single inbound port.
+
+## The hardware
+
+Three `CX`-class Hetzner Cloud VMs, all identical, all running as control-plane **and** worker nodes:
+
+```
+node-1  control-plane + etcd + workloads
+node-2  control-plane + etcd + workloads
+node-3  control-plane + etcd + workloads
+```
+
+The important word is **three**. Not two, not four. etcd - the datastore behind Kubernetes - uses the Raft consensus protocol, and Raft needs a strict majority of members to agree before it accepts a write. With three members you tolerate losing one and keep a majority (2 of 3). With two members you tolerate losing *zero*: lose either and you have no majority, so the API server goes read-only and your cluster freezes.
+
+That is the single most common HA mistake: people add a replica and think they have high availability. Replicas without a quorum-capable control plane just means more copies of an app that all stop together.
+
+## Networking: the whole cluster is hidden
+
+Here is the constraint that shaped everything else: **the cluster has no public inbound access**. A Hetzner Cloud Firewall denies all inbound traffic except ICMP and the Tailscale UDP port. All node-to-node and admin traffic rides a Tailscale tailnet.
+
+That is great for security and terrible for two things people take for granted:
+
+- **Let's Encrypt HTTP-01 challenges don't work.** LE needs to reach port 80 from the public internet, and port 80 is firewalled shut. The fix is DNS-01: prove domain ownership by writing a TXT record (via the Cloudflare API) instead of serving a file. cert-manager handles this once you give it a scoped API token.
+- **A public website can't just bind to a node.** If the box isn't reachable, how does the internet reach a blog running on it?
+
+## Public ingress without opening a port
+
+The answer is a **Cloudflare Tunnel**. Instead of the internet dialing *in* to the cluster, a small `cloudflared` deployment dials *out* to Cloudflare's edge and holds the connection open. Public requests hit Cloudflare, ride the tunnel back down, and land on the in-cluster ingress. The firewall stays deny-all.
+
+The tunnel config is deliberately dumb - a single catch-all route to Traefik:
+
+```yaml
+ingress:
+  - service: https://traefik.kube-system.svc.cluster.local:443
+    originRequest:
+      originServerName: cf-origin.example.net
+```
+
+Whether a given app is *actually* public is then decided one layer up: an app is public only if it has a public DNS record, and DNS records are created by `external-dns` based on an annotation. No annotation, no record, no public route - even though the tunnel would technically carry it. Exposure becomes a one-line, reviewable change in Git instead of a firewall ticket.
+
+## GitOps: the cluster watches a repo, not me
+
+I don't `kubectl apply` anything by hand. Two repositories:
+
+1. **apps** - application code plus CI that builds container images and pushes them to a registry.
+2. **gitops** - Kubernetes manifests. ArgoCD watches this repo and continuously reconciles the cluster to match it.
+
+The rule I hold to is **build once, promote many**. CI builds one immutable image tagged with the commit SHA, writes that exact tag into the `dev` overlay, and then - behind a required-reviewer gate - promotes the *same* tag into `prod`. Nothing is ever rebuilt per environment. If it worked in dev, the identical bytes run in prod. No "works on my machine," no drift between environments, and rollback is just re-pinning an older tag.
+
+### Reusable components beat copy-paste
+
+Kustomize *components* keep every app honest without duplication. Security hardening, resource limits, and public exposure each live in one place and get composed per app:
+
+```yaml
+# an app's overlay
+components:
+  - ../../_components/hardened-workload   # drop caps, read-only rootfs, no SA token
+  - ../../_components/limitrange
+  - ../../_components/expose-public        # the one line that makes it public
+resources:
+  - ../../base
+```
+
+New app, same golden path. The security posture can't quietly rot in app number seven because there is no per-app copy to rot.
+
+## What this actually costs
+
+Three small cloud VMs. That's it. No load balancer bill, no managed control plane, no per-service charges. Cloudflare fronts the public side for free and gives me a CDN and TLS termination as a bonus.
+
+What it costs in *effort* is the real price: you own the upgrades, the backups, the 3am debugging. But that is exactly the point. Every failure is a lesson you can't buy - the etcd quorum you learned by freezing your own cluster, the DNS-01 dance you learned because HTTP-01 refused to work, the tunnel you reached for because binding a port was never an option.
+
+That is a personal developer platform. Not the cheapest way to host a blog - the most educational one.
+
+---
+
+*This blog runs on exactly the platform described above: an Astro static build, in a distroless container, served from the cluster, reached through the tunnel. The source is public.*
