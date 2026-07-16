@@ -30,6 +30,11 @@ on:
         required: false
         type: string
         default: ""
+      require_prod_approval:
+        description: "true = prod-promote bak GitHub Environment 'production' reviewer-gate (default). false = auto-promote til prod uten godkjenning (kun for lav-risiko apper som blog)."
+        required: false
+        type: boolean
+        default: true
 
 # build trenger packages:write for GHCR-push. deploy-jobbene pusher til gitops-repoet
 # via GITOPS_DEPLOY_KEY (ssh), ikke GITHUB_TOKEN, så de bryr seg ikke om disse.
@@ -96,7 +101,8 @@ jobs:
     needs: [deploy-dev, build]
     runs-on: ubuntu-latest
     # environment: production er selve gaten - required reviewer må godkjenne før dette kjører.
-    environment: production
+    # require_prod_approval=false (blog) -> tom environment = ingen gate, auto-promote til prod.
+    environment: ${{ inputs.require_prod_approval && 'production' || '' }}
     concurrency:
       group: gitops-${{ inputs.image }}-prod
       cancel-in-progress: false
