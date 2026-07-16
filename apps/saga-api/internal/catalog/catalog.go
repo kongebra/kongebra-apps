@@ -25,11 +25,8 @@ var models = []Model{
 	{"kimi-k2.7-code:cloud", "Kimi K2.7 Code", "cloud", true, 4, 4, 0, 0, "Flawless Norwegian.", false},
 	{"glm-5.2:cloud", "GLM 5.2", "cloud", true, 3, 4, 0, 0, "Newest, clean.", false},
 	{"minimax-m3:cloud", "MiniMax M3", "cloud", true, 3, 4, 0, 0, "Rich structure.", false},
-	{"qwen3.5:2b", "Qwen3.5 2B", "local", false, 2, 3, 0, 0, "Local default. Excellent structured English.", true},
-	{"qwen3.5:0.8b", "Qwen3.5 0.8B", "local", false, 3, 2, 0, 0, "Fastest local; rougher.", false},
-	{"qwen3.5:4b", "Qwen3.5 4B", "local", false, 2, 3, 0, 0, "Best local quality.", false},
-	{"gemma4:e4b", "Gemma4 e4b", "local", true, 2, 3, 0, 0, "Can do Norwegian directly.", false},
-	{"minicpm5:fp16", "MiniCPM5 fp16", "local", false, 3, 2, 0, 0, "English-only speed option.", false},
+	{"qwen3.5:4b", "Qwen3.5 4B", "local", false, 2, 3, 0, 0, "Local default. Best local quality (kept warm).", true},
+	{"qwen3.5:2b", "Qwen3.5 2B", "local", false, 3, 2, 0, 0, "Faster local (~33% quicker), still solid English.", false},
 }
 
 // ponytail: cloud prices left 0 until Ollama Cloud publishes per-model rates;

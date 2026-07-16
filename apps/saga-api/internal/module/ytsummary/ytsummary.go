@@ -24,7 +24,7 @@ const (
 	chunkWords      = 2000
 	overlapWords    = 200
 	singlePassWords = 2500
-	defaultModel    = "gemma4:e4b"
+	defaultModel    = "qwen3.5:4b"
 	// fixedSeed pins Ollama's sampling seed for every call this module makes.
 	// A fixed (not random-per-job) seed is what makes a "local" tier run
 	// reproducible (Run.Reproducible), and recording the same value we pass

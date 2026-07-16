@@ -19,7 +19,7 @@ func TestCatalogLookups(t *testing.T) {
 	if catalog.IsNorwegian("nonexistent") {
 		t.Fatal("unknown model must default to false")
 	}
-	if len(catalog.All()) < 10 {
+	if len(catalog.All()) < 8 {
 		t.Fatalf("catalog too small: %d", len(catalog.All()))
 	}
 }
@@ -37,8 +37,8 @@ func TestExactlyOneDefaultPerTier(t *testing.T) {
 	if counts["cloud"] != 1 {
 		t.Errorf("cloud tier defaults = %d, want 1", counts["cloud"])
 	}
-	if m, _ := catalog.Get("qwen3.5:2b"); !m.Default {
-		t.Error("qwen3.5:2b should be the local default")
+	if m, _ := catalog.Get("qwen3.5:4b"); !m.Default {
+		t.Error("qwen3.5:4b should be the local default")
 	}
 	if m, _ := catalog.Get("deepseek-v4-flash:cloud"); !m.Default {
 		t.Error("deepseek-v4-flash:cloud should be the cloud default")

@@ -92,7 +92,7 @@ func TestRunConditionalTranslate(t *testing.T) {
 		wantTranslate     bool
 	}{
 		{name: "english target never translates", lang: "en", model: "qwen3.5:2b", wantSummarizeWord: "English", wantTranslate: false},
-		{name: "norwegian-capable model summarizes directly", lang: "no", model: "gemma4:e4b", wantSummarizeWord: "Norwegian", wantTranslate: false},
+		{name: "norwegian-capable model summarizes directly", lang: "no", model: "kimi-k2.6:cloud", wantSummarizeWord: "Norwegian", wantTranslate: false},
 		{name: "english-only model summarizes in english then translates", lang: "no", model: "qwen3.5:2b", wantSummarizeWord: "English", wantTranslate: true},
 	}
 
